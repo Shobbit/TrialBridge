@@ -134,12 +134,22 @@ Use this only if you want to skip GitHub for now.
    ```
 5. Continue from **step 4** of Route A (secrets onward)
 
-The zip contains the `.git` folder, so you can still connect it to GitHub later:
+**What the zip contains:** exactly the committed source — 77 files, 194 KB. It is produced with
+`git archive`, so it *cannot* contain `node_modules`, `.next`, `.env` files or logs. It also does
+**not** contain the `.git` folder, so the commit history is not carried across.
+
+To put it under version control from Replit afterwards:
 
 ```bash
+git init -b main
+git add -A
+git commit -m "TrialBridge"
 git remote add origin https://github.com/YOURNAME/trialbridge.git
 git push -u origin main
 ```
+
+That gives you a repo, but the three existing commits are gone. If you care about the history,
+use Route A instead.
 
 ---
 
