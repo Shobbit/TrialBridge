@@ -3,9 +3,9 @@ import { z } from "zod";
 import { UpstreamError, fetchUpstreamJson } from "@/lib/ctgov/fetch";
 import { normalizeStudy } from "@/lib/ctgov/normalize";
 import { buildSearchUrl } from "@/lib/ctgov/query";
-import type { SearchResponse, Trial } from "@/lib/ctgov/types";
+import { DEFAULT_SEARCH_STATUS, type SearchResponse, type Trial } from "@/lib/ctgov/types";
 import { geocodePlace } from "@/lib/geocode";
-import { searchInputSchema } from "@/lib/schemas";
+import { searchInputSchema, type SearchInput } from "@/lib/schemas";
 
 export const runtime = "nodejs";
 
@@ -36,7 +36,23 @@ export async function POST(request: Request) {
     );
   }
 
-  const input = parsed.data;
+  /**
+   * Recruiting-first is enforced here, not merely defaulted in the form.
+   *
+   * Previously an omitted `recruitmentStatuses` meant no `filter.overallStatus`
+   * was sent at all, so a caller that simply left the field out received
+   * completed, terminated and withdrawn studies. For someone trying to enrol
+   * that is pure noise, so the server now injects the default itself.
+   *
+   * Unsupported statuses never reach this point: `searchInputSchema` rejects
+   * them with a 400 rather than silently converting them.
+   */
+  const input: SearchInput = {
+    ...parsed.data,
+    recruitmentStatuses: parsed.data.recruitmentStatuses?.length
+      ? parsed.data.recruitmentStatuses
+      : [DEFAULT_SEARCH_STATUS],
+  };
   const warnings: string[] = [];
 
   // Resolve the place name so we can both filter and measure distance.

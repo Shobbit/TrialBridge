@@ -2,7 +2,13 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
-import type { SearchMeta, Trial } from "./ctgov/types";
+import {
+  DEFAULT_SEARCH_STATUS,
+  SEARCHABLE_RECRUITMENT_STATUSES,
+  type SearchMeta,
+  type SearchableRecruitmentStatus,
+  type Trial,
+} from "./ctgov/types";
 import {
   EMPTY_PROFILE,
   profileSchema,
@@ -180,7 +186,35 @@ export const useTrialStore = create<TrialState>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 1,
+      version: 2,
+      /**
+       * v1 → v2: searching was narrowed to enrolling statuses only.
+       *
+       * A browser that used the earlier build may hold statuses such as
+       * COMPLETED in its saved profile. Rehydrating that straight into
+       * `profileSchema` would throw and leave the app stuck, so unsupported
+       * values are dropped here and the default restored if nothing survives.
+       */
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Record<string, unknown>;
+        if (version >= 2) return state;
+
+        const profile = (state.profile ?? {}) as Record<string, unknown>;
+        const previous = Array.isArray(profile.recruitmentStatuses)
+          ? profile.recruitmentStatuses
+          : [];
+        const kept = previous.filter((s): s is SearchableRecruitmentStatus =>
+          (SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).includes(s as string),
+        );
+
+        return {
+          ...state,
+          profile: {
+            ...profile,
+            recruitmentStatuses: kept.length ? kept : [DEFAULT_SEARCH_STATUS],
+          },
+        };
+      },
       // Transient request state and cached upstream payloads are not persisted.
       partialize: (s) => ({
         profile: s.profile,

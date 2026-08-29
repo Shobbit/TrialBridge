@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { RECRUITMENT_STATUSES, TRIAL_PHASES } from "./ctgov/types";
+import {
+  DEFAULT_SEARCH_STATUS,
+  SEARCHABLE_RECRUITMENT_STATUSES,
+  TRIAL_PHASES,
+} from "./ctgov/types";
 
 /**
  * Validation schemas shared by the HTTP routes, the React form and the WebMCP
@@ -31,7 +35,13 @@ const profileFields = {
   state: z.string().max(100),
   country: z.string().max(100),
   travelDistanceMiles: z.number().int().min(1).max(3000).nullable(),
-  recruitmentStatuses: z.array(z.enum(RECRUITMENT_STATUSES)).max(9),
+  // Searching is restricted to enrolling statuses — see
+  // SEARCHABLE_RECRUITMENT_STATUSES. Unsupported values are rejected with an
+  // explicit error rather than quietly dropped, so a caller always learns that
+  // its filter was not honoured.
+  recruitmentStatuses: z
+    .array(z.enum(SEARCHABLE_RECRUITMENT_STATUSES))
+    .max(SEARCHABLE_RECRUITMENT_STATUSES.length),
   phases: z.array(z.enum(TRIAL_PHASES)).max(6),
   // Committed atomically via the "Add" button, so trimming is safe here.
   priorTreatments: z.array(z.string().trim().max(120)).max(25),
@@ -53,7 +63,7 @@ export const profileSchema = z.object({
   state: profileFields.state.default(""),
   country: profileFields.country.default("United States"),
   travelDistanceMiles: profileFields.travelDistanceMiles.default(100),
-  recruitmentStatuses: profileFields.recruitmentStatuses.default(["RECRUITING"]),
+  recruitmentStatuses: profileFields.recruitmentStatuses.default([DEFAULT_SEARCH_STATUS]),
   phases: profileFields.phases.default([]),
   priorTreatments: profileFields.priorTreatments.default([]),
   keywords: profileFields.keywords.default(""),
@@ -91,7 +101,14 @@ export const searchInputSchema = z.object({
   state: z.string().trim().max(100).nullish(),
   country: z.string().trim().max(100).nullish(),
   travelDistanceMiles: z.number().int().min(1).max(3000).nullish(),
-  recruitmentStatuses: z.array(z.enum(RECRUITMENT_STATUSES)).max(9).optional(),
+  // Omitting this is not the same as "no filter": the route injects
+  // DEFAULT_SEARCH_STATUS so a bare search can never return studies that are
+  // closed to enrolment.
+  recruitmentStatuses: z
+    .array(z.enum(SEARCHABLE_RECRUITMENT_STATUSES))
+    .min(1, "At least one recruitment status is required")
+    .max(SEARCHABLE_RECRUITMENT_STATUSES.length)
+    .optional(),
   phases: z.array(z.enum(TRIAL_PHASES)).max(6).optional(),
   intervention: z.string().trim().max(120).nullish(),
   keywords: z.string().trim().max(200).nullish(),

@@ -15,7 +15,7 @@ import {
   screeningQuestionSchema,
   searchInputSchema,
 } from "@/lib/schemas";
-import { RECRUITMENT_STATUSES, TRIAL_PHASES, type Trial } from "@/lib/ctgov/types";
+import { SEARCHABLE_RECRUITMENT_STATUSES, TRIAL_PHASES, type Trial } from "@/lib/ctgov/types";
 import { searchInputFromProfile, useTrialStore } from "@/lib/store";
 import type { ToolDescriptor, ToolResult } from "@/types/webmcp";
 
@@ -250,9 +250,11 @@ export function createTools(): ToolDescriptor[] {
           },
           recruitmentStatuses: {
             type: "array",
-            maxItems: 9,
-            items: { type: "string", enum: [...RECRUITMENT_STATUSES] },
-            description: "Recruitment statuses to include. Defaults to RECRUITING only.",
+            minItems: 1,
+            maxItems: SEARCHABLE_RECRUITMENT_STATUSES.length,
+            items: { type: "string", enum: [...SEARCHABLE_RECRUITMENT_STATUSES] },
+            description:
+              "Which enrolling statuses to search. Defaults to RECRUITING alone, which is what someone trying to join a study almost always wants. NOT_YET_RECRUITING covers studies that are registered but not yet open, so it is useful for planning ahead rather than enrolling today. Studies that are completed, terminated, withdrawn, suspended, active-not-recruiting or enrolling-by-invitation cannot be searched, because a participant cannot enrol in them.",
           },
           phases: {
             type: "array",
@@ -334,7 +336,7 @@ export function createTools(): ToolDescriptor[] {
     {
       name: "search_clinical_trials",
       description:
-        "Search the live ClinicalTrials.gov API (v2) for studies that may be relevant, and replace the results shown on the page. If arguments are omitted, the corresponding values from the visible search form are used, so you can call this with no arguments after reading the profile. A condition must be present either in the arguments or in the form. Results are ranked by ClinicalTrials.gov relevance, not by suitability for this person: this tool does not assess eligibility. Each result includes apparent matches, apparent mismatches and information that is still unknown, derived only from structured published fields.",
+        "Search the live ClinicalTrials.gov API (v2) for studies that may be relevant, and replace the results shown on the page. If arguments are omitted, the corresponding values from the visible search form are used, so you can call this with no arguments after reading the profile. A condition must be present either in the arguments or in the form. Searches cover currently recruiting studies by default, because this tool is for people trying to enrol now; studies that are closed to enrolment are not searchable at all. Results are ranked by ClinicalTrials.gov relevance, not by suitability for this person: this tool does not assess eligibility. Each result includes apparent matches, apparent mismatches and information that is still unknown, derived only from structured published fields.",
       inputSchema: {
         type: "object",
         properties: {
@@ -356,9 +358,11 @@ export function createTools(): ToolDescriptor[] {
           },
           recruitmentStatuses: {
             type: "array",
-            maxItems: 9,
-            items: { type: "string", enum: [...RECRUITMENT_STATUSES] },
-            description: "Defaults to the form value, normally RECRUITING.",
+            minItems: 1,
+            maxItems: SEARCHABLE_RECRUITMENT_STATUSES.length,
+            items: { type: "string", enum: [...SEARCHABLE_RECRUITMENT_STATUSES] },
+            description:
+              "Defaults to the form value, normally RECRUITING. Add NOT_YET_RECRUITING only when the person explicitly wants studies that have not opened yet; label those clearly as not currently enrolling. Closed statuses are not searchable.",
           },
           phases: {
             type: "array",

@@ -6,6 +6,14 @@
  * and every consumer works with these flat types instead.
  */
 
+/**
+ * Every status ClinicalTrials.gov can report.
+ *
+ * This list stays complete because it is what we *display*: a study that is
+ * already shortlisted can later be terminated or completed, and hiding that
+ * would be worse than showing it. `normalizeStudy` validates against this list,
+ * and the UI renders whatever comes back.
+ */
 export const RECRUITMENT_STATUSES = [
   "RECRUITING",
   "NOT_YET_RECRUITING",
@@ -18,6 +26,28 @@ export const RECRUITMENT_STATUSES = [
   "UNKNOWN",
 ] as const;
 export type RecruitmentStatus = (typeof RECRUITMENT_STATUSES)[number];
+
+/**
+ * The only statuses a *search* may filter on.
+ *
+ * TrialBridge is for people trying to enrol now, so searching for completed,
+ * terminated, withdrawn, suspended or active-not-recruiting studies would
+ * generate work with no route to enrolment. `ENROLLING_BY_INVITATION` is
+ * excluded as well: participants cannot refer themselves into those studies,
+ * so offering them would mislead.
+ *
+ * `RECRUITING` is the default. `NOT_YET_RECRUITING` is available as an
+ * advanced choice because a site opening soon is genuine planning signal — it
+ * is labelled "not currently enrolling" everywhere it appears.
+ *
+ * This restriction applies to searching only. `get_trial_details` retrieves any
+ * valid NCT record whatever its status.
+ */
+export const SEARCHABLE_RECRUITMENT_STATUSES = ["RECRUITING", "NOT_YET_RECRUITING"] as const;
+export type SearchableRecruitmentStatus = (typeof SEARCHABLE_RECRUITMENT_STATUSES)[number];
+
+/** Applied when a caller omits the status filter entirely. */
+export const DEFAULT_SEARCH_STATUS: SearchableRecruitmentStatus = "RECRUITING";
 
 export const TRIAL_PHASES = [
   "EARLY_PHASE1",

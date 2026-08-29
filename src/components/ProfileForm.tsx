@@ -2,10 +2,9 @@
 
 import { useId, useState } from "react";
 import { runSearch } from "@/lib/actions";
-import { RECRUITMENT_STATUSES, TRIAL_PHASES } from "@/lib/ctgov/types";
+import { TRIAL_PHASES } from "@/lib/ctgov/types";
 import { searchInputFromProfile, useTrialStore } from "@/lib/store";
 import { Button, Panel, phaseLabel } from "./primitives";
-import { statusLabel } from "./primitives";
 
 const FIELD =
   "w-full rounded-lg border border-tb-border bg-tb-surface px-3 py-2 text-sm text-tb-text placeholder:text-tb-muted/70";
@@ -209,20 +208,64 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
           </div>
         </div>
 
+        {/*
+          Recruiting-first. TrialBridge is for people trying to enrol now, so
+          completed, terminated, withdrawn, suspended, active-not-recruiting and
+          enrolling-by-invitation studies are not searchable at all — they would
+          create work with no route to enrolment.
+        */}
         <fieldset>
           <legend className={LABEL}>Recruitment status</legend>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            {RECRUITMENT_STATUSES.map((status) => (
-              <label key={status} className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={profile.recruitmentStatuses.includes(status)}
-                  onChange={(e) => toggleArrayValue("recruitmentStatuses", status, e.target.checked)}
-                />
-                {statusLabel(status)}
-              </label>
-            ))}
-          </div>
+          <label className="flex items-start gap-2 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={profile.recruitmentStatuses.includes("RECRUITING")}
+              onChange={(e) => toggleArrayValue("recruitmentStatuses", "RECRUITING", e.target.checked)}
+              aria-describedby={`${ids}-recruiting-help`}
+            />
+            <span>
+              <span className="font-medium">Recruiting now</span>
+              <span id={`${ids}-recruiting-help`} className="block text-[11px] text-tb-muted">
+                Studies currently enrolling participants. Recommended.
+              </span>
+            </span>
+          </label>
+
+          <details className="mt-2">
+            <summary className="cursor-pointer text-[11px] font-medium text-tb-accent">
+              Advanced status options
+            </summary>
+            <label className="mt-1.5 flex items-start gap-2 text-xs">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={profile.recruitmentStatuses.includes("NOT_YET_RECRUITING")}
+                onChange={(e) =>
+                  toggleArrayValue("recruitmentStatuses", "NOT_YET_RECRUITING", e.target.checked)
+                }
+                aria-describedby={`${ids}-nyr-help`}
+              />
+              <span>
+                <span className="font-medium">Not yet recruiting</span>
+                <span id={`${ids}-nyr-help`} className="block text-[11px] text-tb-muted">
+                  <strong>Not currently enrolling.</strong> These studies have been registered but
+                  have not opened. Useful for planning ahead, not for enrolling today.
+                </span>
+              </span>
+            </label>
+            <p className="mt-2 text-[11px] text-tb-muted">
+              Completed, terminated, withdrawn, suspended and active-not-recruiting studies are not
+              searchable, because they cannot enrol new participants. A study you have already
+              shortlisted will still show its true status if that status later changes.
+            </p>
+          </details>
+
+          {profile.recruitmentStatuses.length === 0 ? (
+            <p role="status" className="mt-2 text-[11px] text-tb-unknown">
+              No status selected — searching will use “Recruiting now”.
+            </p>
+          ) : null}
         </fieldset>
 
         <fieldset>
