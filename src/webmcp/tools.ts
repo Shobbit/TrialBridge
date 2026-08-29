@@ -1,0 +1,987 @@
+"use client";
+
+import { z } from "zod";
+import {
+  ActionError,
+  fetchTrialDetail,
+  findKnownTrial,
+  resolveTrial,
+  runSearch,
+} from "@/lib/actions";
+import { ELIGIBILITY_DISCLAIMER, analyzeTrial } from "@/lib/match";
+import {
+  nctIdSchema,
+  profileUpdateSchema,
+  screeningQuestionSchema,
+  searchInputSchema,
+} from "@/lib/schemas";
+import { RECRUITMENT_STATUSES, TRIAL_PHASES, type Trial } from "@/lib/ctgov/types";
+import { searchInputFromProfile, useTrialStore } from "@/lib/store";
+import type { ToolDescriptor, ToolResult } from "@/types/webmcp";
+
+/**
+ * WebMCP tool definitions for TrialBridge.
+ *
+ * Every handler reads and writes the same Zustand store the React UI renders
+ * from, so any agent action is visible on screen before the tool returns.
+ *
+ * Result convention: each tool returns both a human-readable `content` block
+ * and a machine-readable `structuredContent` object. `structuredContent`
+ * always includes an `ok` boolean and, for write tools, a `verification`
+ * object describing the observable state after the call - so the agent can
+ * confirm what actually happened rather than assuming success.
+ */
+
+// --------------------------------------------------------------------------
+// Result helpers
+// --------------------------------------------------------------------------
+
+function ok<T extends Record<string, unknown>>(summary: string, data: T): ToolResult {
+  return {
+    content: [{ type: "text", text: summary }],
+    structuredContent: { ok: true, ...data },
+  };
+}
+
+function fail(message: string, code: string, hint?: string): ToolResult {
+  return {
+    content: [{ type: "text", text: `${message}${hint ? ` ${hint}` : ""}` }],
+    structuredContent: { ok: false, error: { code, message, hint: hint ?? null } },
+    isError: true,
+  };
+}
+
+/** Converts a Zod failure into a stable, agent-readable error result. */
+function invalidInput(error: z.ZodError): ToolResult {
+  const issues = error.issues.map((i) => ({
+    path: i.path.join(".") || "(root)",
+    message: i.message,
+  }));
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Invalid input: ${issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
+      },
+    ],
+    structuredContent: {
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "One or more arguments were rejected.", issues },
+    },
+    isError: true,
+  };
+}
+
+/** Wraps a handler so no exception ever escapes into the agent runtime. */
+function guard(
+  name: string,
+  handler: (input: Record<string, unknown>) => Promise<ToolResult>,
+): ToolDescriptor["execute"] {
+  return async (input) => {
+    try {
+      return await handler(input ?? {});
+    } catch (error) {
+      if (error instanceof ActionError) {
+        return fail(
+          error.message,
+          error.retryable ? "UPSTREAM_TEMPORARY" : "UPSTREAM_REJECTED",
+          error.retryable ? "This may succeed if retried shortly." : undefined,
+        );
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return fail(`The ${name} tool failed unexpectedly: ${message}`, "INTERNAL_ERROR");
+    }
+  };
+}
+
+// --------------------------------------------------------------------------
+// Shared projections
+// --------------------------------------------------------------------------
+
+/** Compact trial shape returned in list contexts to keep payloads small. */
+function trialSummary(trial: Trial) {
+  return {
+    nctId: trial.nctId,
+    title: trial.briefTitle,
+    overallStatus: trial.overallStatus,
+    phases: trial.phases,
+    conditions: trial.conditions.slice(0, 6),
+    interventions: trial.interventions.slice(0, 6).map((i) => ({ type: i.type, name: i.name })),
+    minimumAge: trial.minimumAge,
+    maximumAge: trial.maximumAge,
+    sex: trial.sex,
+    leadSponsor: trial.leadSponsor,
+    locationCount: trial.locations.length,
+    nearestLocationMiles: trial.nearestLocationMiles,
+    nearestLocation: trial.locations
+      .filter((l) => l.distanceMiles !== null)
+      .sort((a, b) => (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0))[0]
+      ? (() => {
+          const l = trial.locations
+            .filter((x) => x.distanceMiles !== null)
+            .sort((a, b) => (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0))[0];
+          return [l.facility, l.city, l.state, l.country].filter(Boolean).join(", ");
+        })()
+      : null,
+    briefSummary: trial.briefSummary ? trial.briefSummary.slice(0, 600) : null,
+    sourceUrl: trial.sourceUrl,
+    retrievedAt: trial.retrievedAt,
+  };
+}
+
+function analysisFor(trial: Trial) {
+  const analysis = analyzeTrial(trial, useTrialStore.getState().profile);
+  return {
+    apparentMatches: analysis.matches.map((f) => f.detail),
+    apparentMismatches: analysis.mismatches.map((f) => f.detail),
+    stillUnknown: analysis.unknowns.map((f) => f.detail),
+  };
+}
+
+// --------------------------------------------------------------------------
+// Reusable JSON Schema fragments
+// --------------------------------------------------------------------------
+
+const nctIdProperty = {
+  type: "string",
+  pattern: "^NCT\\d{8}$",
+  description: "ClinicalTrials.gov identifier in the form NCT01234567.",
+} as const;
+
+// --------------------------------------------------------------------------
+// Tool definitions
+// --------------------------------------------------------------------------
+
+export function createTools(): ToolDescriptor[] {
+  return [
+    // ---------------------------------------------------------------- 1
+    {
+      name: "get_search_profile",
+      description:
+        "Read the trial-search preferences currently shown in the TrialBridge form: condition, age, sex, city/state/country, acceptable travel distance, recruitment statuses, preferred phases, prior treatments and keywords. Read-only; changes nothing. Call this first to learn what the person has already entered before deciding what to search or what to ask them. Fields the person left blank are returned as empty strings, empty arrays or null so you can see exactly what is missing.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          profile: { type: "object", description: "The values currently in the form." },
+          missingFields: {
+            type: "array",
+            items: { type: "string" },
+            description: "Names of fields that are empty and may be worth asking about.",
+          },
+          readyToSearch: {
+            type: "boolean",
+            description: "True when at least a condition has been entered.",
+          },
+        },
+        required: ["ok", "profile", "missingFields", "readyToSearch"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Read search profile",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: guard("get_search_profile", async () => {
+        const { profile, shortlist, results, questions } = useTrialStore.getState();
+
+        const missingFields: string[] = [];
+        if (!profile.condition) missingFields.push("condition");
+        if (profile.age === null) missingFields.push("age");
+        if (!profile.city && !profile.state) missingFields.push("city/state");
+        if (profile.travelDistanceMiles === null) missingFields.push("travelDistanceMiles");
+        if (!profile.priorTreatments.length) missingFields.push("priorTreatments");
+
+        return ok(
+          profile.condition
+            ? `Profile: condition "${profile.condition}"${profile.age !== null ? `, age ${profile.age}` : ""}${
+                profile.city || profile.state
+                  ? `, near ${[profile.city, profile.state].filter(Boolean).join(", ")}`
+                  : ""
+              }. Missing: ${missingFields.length ? missingFields.join(", ") : "nothing"}.`
+            : "The search form is empty. A condition or diagnosis is required before searching.",
+          {
+            profile,
+            missingFields,
+            readyToSearch: Boolean(profile.condition),
+            currentResultCount: results.length,
+            shortlistCount: shortlist.length,
+            questionCount: questions.length,
+            note: "These values were self-entered by the person using the page. They are stored only in this browser.",
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 2
+    {
+      name: "update_search_profile",
+      description:
+        "Update one or more fields of the visible TrialBridge search form. Only the listed fields may be changed, and every change is rendered in the form immediately so the person can see and correct it. Supply only the fields you intend to change; omitted fields keep their current value. Use this to record details the person tells you in conversation (for example their city or acceptable travel distance) before running a search. Never invent clinical details: only write values the person actually stated.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          condition: {
+            type: "string",
+            maxLength: 200,
+            description: "Medical condition or diagnosis to search for, as the person described it.",
+          },
+          age: {
+            type: ["integer", "null"],
+            minimum: 0,
+            maximum: 120,
+            description: "Age in whole years. Never a date of birth.",
+          },
+          sex: {
+            type: "string",
+            enum: ["unspecified", "male", "female"],
+            description: "Only set this when the person volunteers it; many trials do not restrict by sex.",
+          },
+          city: { type: "string", maxLength: 100, description: "City name only." },
+          state: { type: "string", maxLength: 100, description: "State, province or region." },
+          country: { type: "string", maxLength: 100, description: "Country name, e.g. United States." },
+          travelDistanceMiles: {
+            type: ["integer", "null"],
+            minimum: 1,
+            maximum: 3000,
+            description: "How far the person is willing to travel to a study site, in miles.",
+          },
+          recruitmentStatuses: {
+            type: "array",
+            maxItems: 9,
+            items: { type: "string", enum: [...RECRUITMENT_STATUSES] },
+            description: "Recruitment statuses to include. Defaults to RECRUITING only.",
+          },
+          phases: {
+            type: "array",
+            maxItems: 6,
+            items: { type: "string", enum: [...TRIAL_PHASES] },
+            description: "Preferred trial phases. Leave empty to include all phases.",
+          },
+          priorTreatments: {
+            type: "array",
+            maxItems: 25,
+            items: { type: "string", maxLength: 120 },
+            description:
+              "Treatments the person says they have already received. Used only to flag mentions in eligibility text.",
+          },
+          keywords: {
+            type: "string",
+            maxLength: 200,
+            description: "Additional free-text search keywords, e.g. a biomarker or drug class.",
+          },
+        },
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          updatedFields: { type: "array", items: { type: "string" } },
+          profile: { type: "object" },
+          verification: { type: "object" },
+        },
+        required: ["ok", "updatedFields", "profile"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Update search profile",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: guard("update_search_profile", async (input) => {
+        const parsed = profileUpdateSchema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const updatedFields = Object.keys(parsed.data);
+        if (!updatedFields.length) {
+          return fail(
+            "No fields were supplied, so nothing was changed.",
+            "NO_FIELDS",
+            "Pass at least one profile field to update.",
+          );
+        }
+
+        const store = useTrialStore.getState();
+        const before = store.profile;
+        const profile = store.setProfile(parsed.data);
+        store.noteAgentAction(`Updated search form: ${updatedFields.join(", ")}`);
+
+        return ok(
+          `Updated ${updatedFields.join(", ")} in the visible search form. The person can see and edit these values now.`,
+          {
+            updatedFields,
+            profile,
+            verification: {
+              changes: updatedFields.map((field) => ({
+                field,
+                previousValue: (before as Record<string, unknown>)[field] ?? null,
+                newValue: (profile as Record<string, unknown>)[field] ?? null,
+              })),
+              visibleInUi: true,
+              searchWasNotRun: "Call search_clinical_trials to apply these values.",
+            },
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 3
+    {
+      name: "search_clinical_trials",
+      description:
+        "Search the live ClinicalTrials.gov API (v2) for studies that may be relevant, and replace the results shown on the page. If arguments are omitted, the corresponding values from the visible search form are used, so you can call this with no arguments after reading the profile. A condition must be present either in the arguments or in the form. Results are ranked by ClinicalTrials.gov relevance, not by suitability for this person: this tool does not assess eligibility. Each result includes apparent matches, apparent mismatches and information that is still unknown, derived only from structured published fields.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          condition: {
+            type: "string",
+            minLength: 1,
+            maxLength: 200,
+            description: "Condition or diagnosis. Defaults to the value in the form.",
+          },
+          city: { type: "string", maxLength: 100, description: "Defaults to the form value." },
+          state: { type: "string", maxLength: 100, description: "Defaults to the form value." },
+          country: { type: "string", maxLength: 100, description: "Defaults to the form value." },
+          travelDistanceMiles: {
+            type: ["integer", "null"],
+            minimum: 1,
+            maximum: 3000,
+            description:
+              "Radius in miles around the resolved city. Ignored when the location cannot be geocoded.",
+          },
+          recruitmentStatuses: {
+            type: "array",
+            maxItems: 9,
+            items: { type: "string", enum: [...RECRUITMENT_STATUSES] },
+            description: "Defaults to the form value, normally RECRUITING.",
+          },
+          phases: {
+            type: "array",
+            maxItems: 6,
+            items: { type: "string", enum: [...TRIAL_PHASES] },
+            description: "Restrict to these phases. Omit or leave empty for all phases.",
+          },
+          intervention: {
+            type: "string",
+            maxLength: 120,
+            description: "Optional drug, device or procedure name to bias the search toward.",
+          },
+          keywords: { type: "string", maxLength: 200, description: "Additional free-text terms." },
+          pageSize: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            description: "Number of studies to return. Defaults to 20.",
+          },
+          applyToForm: {
+            type: "boolean",
+            description:
+              "When true (the default), any arguments supplied are also written into the visible form so the person can see what was searched.",
+          },
+        },
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          totalCount: { type: ["integer", "null"] },
+          returnedCount: { type: "integer" },
+          retrievedAt: { type: "string" },
+          source: { type: "string" },
+          trials: { type: "array", items: { type: "object" } },
+          warnings: { type: "array", items: { type: "string" } },
+          disclaimer: { type: "string" },
+        },
+        required: ["ok", "returnedCount", "trials", "disclaimer"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Search ClinicalTrials.gov",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      execute: guard("search_clinical_trials", async (input) => {
+        const argSchema = searchInputSchema
+          .partial({ condition: true })
+          .extend({ applyToForm: z.boolean().optional() });
+        const parsed = argSchema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const { applyToForm = true, ...args } = parsed.data;
+        const store = useTrialStore.getState();
+
+        // Mirror supplied arguments into the visible form first, so the person
+        // sees the criteria that are about to be searched.
+        if (applyToForm) {
+          const formUpdate = profileUpdateSchema.safeParse({
+            ...(args.condition !== undefined ? { condition: args.condition } : {}),
+            ...(args.city != null ? { city: args.city } : {}),
+            ...(args.state != null ? { state: args.state } : {}),
+            ...(args.country != null ? { country: args.country } : {}),
+            ...(args.travelDistanceMiles !== undefined
+              ? { travelDistanceMiles: args.travelDistanceMiles }
+              : {}),
+            ...(args.recruitmentStatuses ? { recruitmentStatuses: args.recruitmentStatuses } : {}),
+            ...(args.phases ? { phases: args.phases } : {}),
+            ...(args.keywords != null ? { keywords: args.keywords } : {}),
+          });
+          if (formUpdate.success && Object.keys(formUpdate.data).length) {
+            store.setProfile(formUpdate.data);
+          }
+        }
+
+        const profile = useTrialStore.getState().profile;
+        const base = searchInputFromProfile(profile);
+
+        const merged = searchInputSchema.safeParse({
+          ...(base ?? {}),
+          ...Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined)),
+          condition: args.condition ?? profile.condition,
+        });
+
+        if (!merged.success) {
+          return fail(
+            "A condition or diagnosis is required before searching, and none was supplied or present in the form.",
+            "MISSING_CONDITION",
+            "Ask the person what condition they are looking for, or call update_search_profile first.",
+          );
+        }
+
+        const result = await runSearch(merged.data);
+        useTrialStore
+          .getState()
+          .noteAgentAction(
+            `Searched ClinicalTrials.gov for "${merged.data.condition}" (${result.trials.length} shown)`,
+          );
+
+        return ok(
+          `Found ${result.meta.totalCount ?? result.trials.length} studies on ClinicalTrials.gov for "${merged.data.condition}"; the ${result.trials.length} shown are now displayed on the page.${
+            result.meta.warnings.length ? ` Note: ${result.meta.warnings.join(" ")}` : ""
+          }`,
+          {
+            totalCount: result.meta.totalCount,
+            returnedCount: result.meta.returnedCount,
+            retrievedAt: result.meta.retrievedAt,
+            source: "ClinicalTrials.gov API v2",
+            searchedWith: merged.data,
+            resolvedLocation: result.meta.resolvedLocation,
+            warnings: result.meta.warnings,
+            trials: result.trials.map((t) => ({ ...trialSummary(t), ...analysisFor(t) })),
+            verification: {
+              visibleInUi: true,
+              resultsReplaced: true,
+            },
+            disclaimer: ELIGIBILITY_DISCLAIMER,
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 4
+    {
+      name: "get_trial_details",
+      description:
+        "Retrieve the complete record for one study by NCT number, including the full free-text inclusion and exclusion criteria, all study locations, sponsor, interventions and summary. Read-only. Use this before shortlisting a study or before telling the person anything specific about its criteria, because the search results carry only a truncated summary. The returned criteria text is quoted verbatim from ClinicalTrials.gov and must not be paraphrased into an eligibility decision.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          nctId: nctIdProperty,
+          refresh: {
+            type: "boolean",
+            description: "Force a fresh read from ClinicalTrials.gov instead of using the cached copy.",
+          },
+        },
+        required: ["nctId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          trial: { type: "object" },
+          eligibilityCriteria: { type: ["string", "null"] },
+          apparentMatches: { type: "array", items: { type: "string" } },
+          apparentMismatches: { type: "array", items: { type: "string" } },
+          stillUnknown: { type: "array", items: { type: "string" } },
+          disclaimer: { type: "string" },
+        },
+        required: ["ok", "trial", "disclaimer"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Get trial details",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+      execute: guard("get_trial_details", async (input) => {
+        const schema = z.object({ nctId: nctIdSchema, refresh: z.boolean().optional() });
+        const parsed = schema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const trial = parsed.data.refresh
+          ? await fetchTrialDetail(parsed.data.nctId, true)
+          : await resolveTrial(parsed.data.nctId);
+
+        // Open the detail panel so the person sees what is being discussed.
+        const store = useTrialStore.getState();
+        store.setOpenTrialId(trial.nctId);
+        store.noteAgentAction(`Opened details for ${trial.nctId}`);
+
+        return ok(
+          `Retrieved ${trial.nctId}: "${trial.briefTitle}" (${trial.overallStatus}). Full eligibility criteria included. Source: ${trial.sourceUrl}`,
+          {
+            trial: {
+              ...trialSummary(trial),
+              officialTitle: trial.officialTitle,
+              studyType: trial.studyType,
+              enrollmentCount: trial.enrollmentCount,
+              healthyVolunteers: trial.healthyVolunteers,
+              stdAges: trial.stdAges,
+              collaborators: trial.collaborators,
+              startDate: trial.startDate,
+              completionDate: trial.completionDate,
+              lastUpdatePostDate: trial.lastUpdatePostDate,
+              briefSummary: trial.briefSummary,
+              locations: trial.locations.map((l) => ({
+                facility: l.facility,
+                city: l.city,
+                state: l.state,
+                country: l.country,
+                status: l.status,
+                distanceMiles: l.distanceMiles,
+              })),
+            },
+            eligibilityCriteria: trial.eligibilityCriteria,
+            ...analysisFor(trial),
+            source: "ClinicalTrials.gov API v2",
+            retrievedAt: trial.retrievedAt,
+            sourceUrl: trial.sourceUrl,
+            disclaimer: ELIGIBILITY_DISCLAIMER,
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 5
+    {
+      name: "shortlist_trial",
+      description:
+        "Add one study to the person's visible shortlist, which is saved in this browser only. Use this for studies worth a closer look, and always give a short factual reason drawn from published trial data (for example matching age range or a site within the stated travel distance). Adding a study to the shortlist does not mean the person qualifies for it. If the study is already shortlisted the call succeeds without duplicating it.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          nctId: nctIdProperty,
+          note: {
+            type: "string",
+            maxLength: 400,
+            description:
+              "Short factual reason for shortlisting, phrased as an observation about published data, not as an eligibility claim.",
+          },
+        },
+        required: ["nctId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          added: { type: "boolean" },
+          alreadyPresent: { type: "boolean" },
+          shortlistCount: { type: "integer" },
+          shortlistNctIds: { type: "array", items: { type: "string" } },
+        },
+        required: ["ok", "added", "shortlistCount"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Shortlist a trial",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: guard("shortlist_trial", async (input) => {
+        const schema = z.object({
+          nctId: nctIdSchema,
+          note: z.string().trim().max(400).optional(),
+        });
+        const parsed = schema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const trial = await resolveTrial(parsed.data.nctId);
+        const store = useTrialStore.getState();
+        const added = store.addToShortlist(trial, parsed.data.note ?? null, "agent");
+        store.noteAgentAction(
+          added ? `Shortlisted ${trial.nctId}` : `${trial.nctId} was already shortlisted`,
+        );
+
+        const shortlist = useTrialStore.getState().shortlist;
+
+        return ok(
+          added
+            ? `Added ${trial.nctId} ("${trial.briefTitle}") to the shortlist, which now has ${shortlist.length} ${shortlist.length === 1 ? "study" : "studies"}. It is visible on the page and the person can remove it.`
+            : `${trial.nctId} was already on the shortlist; nothing changed. The shortlist has ${shortlist.length} ${shortlist.length === 1 ? "study" : "studies"}.`,
+          {
+            added,
+            alreadyPresent: !added,
+            shortlistCount: shortlist.length,
+            shortlistNctIds: shortlist.map((e) => e.trial.nctId),
+            verification: { visibleInUi: true, removableByHuman: true },
+            disclaimer: ELIGIBILITY_DISCLAIMER,
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 6
+    {
+      name: "remove_shortlisted_trial",
+      description:
+        "Remove one study from the visible shortlist and from this browser's saved copy. Use this when the person says they are not interested, or when newly retrieved details reveal a clear published mismatch such as an age range that excludes them. Removal is immediate and visible; the study can be shortlisted again later. Returns ok with removed:false when the study was not on the shortlist.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          nctId: nctIdProperty,
+          reason: {
+            type: "string",
+            maxLength: 300,
+            description: "Optional short reason, recorded for the person to see in the activity note.",
+          },
+        },
+        required: ["nctId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          removed: { type: "boolean" },
+          shortlistCount: { type: "integer" },
+          shortlistNctIds: { type: "array", items: { type: "string" } },
+        },
+        required: ["ok", "removed", "shortlistCount"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Remove a shortlisted trial",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: guard("remove_shortlisted_trial", async (input) => {
+        const schema = z.object({
+          nctId: nctIdSchema,
+          reason: z.string().trim().max(300).optional(),
+        });
+        const parsed = schema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const store = useTrialStore.getState();
+        const removed = store.removeFromShortlist(parsed.data.nctId);
+        store.noteAgentAction(
+          removed
+            ? `Removed ${parsed.data.nctId} from the shortlist${parsed.data.reason ? `: ${parsed.data.reason}` : ""}`
+            : `${parsed.data.nctId} was not on the shortlist`,
+        );
+
+        const shortlist = useTrialStore.getState().shortlist;
+
+        return ok(
+          removed
+            ? `Removed ${parsed.data.nctId} from the shortlist, which now has ${shortlist.length} ${shortlist.length === 1 ? "study" : "studies"}.`
+            : `${parsed.data.nctId} was not on the shortlist, so nothing changed.`,
+          {
+            removed,
+            shortlistCount: shortlist.length,
+            shortlistNctIds: shortlist.map((e) => e.trial.nctId),
+            verification: { visibleInUi: true },
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 7
+    {
+      name: "compare_shortlisted_trials",
+      description:
+        "Return a structured side-by-side comparison of shortlisted studies and switch the page to its comparison view. Compares recruitment status, phase, sponsor, study type, published age range, sex eligibility, nearest site and travel distance, interventions, and the leading inclusion and exclusion criteria extracted verbatim from the eligibility text. Also lists, per study, what could not be determined from published data. Use this to help the person weigh options; it does not rank studies by suitability and does not assess eligibility.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          nctIds: {
+            type: "array",
+            minItems: 2,
+            maxItems: 6,
+            items: nctIdProperty,
+            description:
+              "Studies to compare. Omit to compare everything currently on the shortlist. Studies not on the shortlist are reported as skipped.",
+          },
+          criteriaExcerptCount: {
+            type: "integer",
+            minimum: 1,
+            maximum: 10,
+            description: "How many inclusion and exclusion lines to extract per study. Defaults to 4.",
+          },
+        },
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          comparedCount: { type: "integer" },
+          trials: { type: "array", items: { type: "object" } },
+          skipped: { type: "array", items: { type: "string" } },
+          disclaimer: { type: "string" },
+        },
+        required: ["ok", "comparedCount", "trials", "disclaimer"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Compare shortlisted trials",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: guard("compare_shortlisted_trials", async (input) => {
+        const schema = z.object({
+          nctIds: z.array(nctIdSchema).min(2).max(6).optional(),
+          criteriaExcerptCount: z.number().int().min(1).max(10).optional(),
+        });
+        const parsed = schema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const excerptCount = parsed.data.criteriaExcerptCount ?? 4;
+        const shortlist = useTrialStore.getState().shortlist;
+
+        if (shortlist.length === 0) {
+          return fail(
+            "The shortlist is empty, so there is nothing to compare.",
+            "EMPTY_SHORTLIST",
+            "Use shortlist_trial to add at least two studies first.",
+          );
+        }
+
+        const requested = parsed.data.nctIds;
+        const skipped: string[] = [];
+        const selected = requested
+          ? requested
+              .map((id) => {
+                const entry = shortlist.find((e) => e.trial.nctId === id);
+                if (!entry) skipped.push(id);
+                return entry;
+              })
+              .filter((e): e is (typeof shortlist)[number] => Boolean(e))
+          : shortlist;
+
+        if (selected.length < 2) {
+          return fail(
+            `Only ${selected.length} of the requested studies are on the shortlist, so a comparison is not possible.`,
+            "INSUFFICIENT_TRIALS",
+            "At least two shortlisted studies are needed.",
+          );
+        }
+
+        const store = useTrialStore.getState();
+        store.setOpenTrialId(null);
+        store.noteAgentAction(`Compared ${selected.length} shortlisted studies`);
+
+        const profile = store.profile;
+
+        const trials = selected.map(({ trial, note }) => {
+          const analysis = analyzeTrial(trial, profile);
+          const { inclusion, exclusion } = splitCriteria(trial.eligibilityCriteria, excerptCount);
+          const nearest = trial.locations
+            .filter((l) => l.distanceMiles !== null)
+            .sort((a, b) => (a.distanceMiles ?? 0) - (b.distanceMiles ?? 0))[0];
+
+          return {
+            nctId: trial.nctId,
+            title: trial.briefTitle,
+            shortlistNote: note,
+            recruitmentStatus: trial.overallStatus,
+            phase: trial.phases.length ? trial.phases.join(", ") : "Not applicable or not stated",
+            studyType: trial.studyType,
+            sponsor: trial.leadSponsor,
+            enrollmentCount: trial.enrollmentCount,
+            ageRange: {
+              minimum: trial.minimumAge,
+              maximum: trial.maximumAge,
+            },
+            sexEligibility: trial.sex,
+            acceptsHealthyVolunteers: trial.healthyVolunteers,
+            interventions: trial.interventions.map((i) => `${i.type ?? "Other"}: ${i.name}`),
+            location: {
+              totalSites: trial.locations.length,
+              nearestSite: nearest
+                ? [nearest.facility, nearest.city, nearest.state, nearest.country]
+                    .filter(Boolean)
+                    .join(", ")
+                : null,
+              nearestSiteMiles: trial.nearestLocationMiles,
+              withinStatedTravelLimit:
+                trial.nearestLocationMiles !== null && profile.travelDistanceMiles !== null
+                  ? trial.nearestLocationMiles <= profile.travelDistanceMiles
+                  : null,
+            },
+            majorInclusionCriteria: inclusion,
+            majorExclusionCriteria: exclusion,
+            apparentMatches: analysis.matches.map((f) => f.detail),
+            apparentMismatches: analysis.mismatches.map((f) => f.detail),
+            stillUnknown: analysis.unknowns.map((f) => f.detail),
+            lastUpdatePostDate: trial.lastUpdatePostDate,
+            sourceUrl: trial.sourceUrl,
+            retrievedAt: trial.retrievedAt,
+          };
+        });
+
+        return ok(
+          `Compared ${trials.length} shortlisted studies: ${trials.map((t) => t.nctId).join(", ")}. The comparison view is now shown on the page.${
+            skipped.length ? ` Skipped (not on shortlist): ${skipped.join(", ")}.` : ""
+          }`,
+          {
+            comparedCount: trials.length,
+            trials,
+            skipped,
+            source: "ClinicalTrials.gov API v2",
+            verification: { visibleInUi: true },
+            disclaimer: ELIGIBILITY_DISCLAIMER,
+          },
+        );
+      }),
+    },
+
+    // ---------------------------------------------------------------- 8
+    {
+      name: "save_screening_question",
+      description:
+        "Add a question to the visible list the person can take to a trial investigator or their own doctor. Use this to turn anything you could not determine from published data into something the person can actually ask, for example an unclear prior-therapy requirement or a washout period. Write the question in plain language, addressed from the person to the study team. Do not phrase it as advice, and do not suggest stopping or changing any treatment. Questions are stored in this browser only.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            minLength: 5,
+            maxLength: 500,
+            description:
+              "The question in the person's own voice, e.g. 'Does prior immunotherapy affect my eligibility for this study?'",
+          },
+          nctId: {
+            type: ["string", "null"],
+            pattern: "^NCT\\d{8}$",
+            description: "The study the question relates to, or null for a general question.",
+          },
+          rationale: {
+            type: "string",
+            maxLength: 500,
+            description:
+              "Short explanation of which published gap or ambiguity prompted this question, shown alongside it.",
+          },
+        },
+        required: ["question"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          questionId: { type: "string" },
+          questionCount: { type: "integer" },
+          question: { type: "object" },
+        },
+        required: ["ok", "questionId", "questionCount"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Save a screening question",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+      execute: guard("save_screening_question", async (input) => {
+        const parsed = screeningQuestionSchema.safeParse(input);
+        if (!parsed.success) return invalidInput(parsed.error);
+
+        const { question, nctId, rationale } = parsed.data;
+
+        if (nctId && !findKnownTrial(nctId)) {
+          return fail(
+            `${nctId} is not among the studies currently loaded in the page.`,
+            "UNKNOWN_TRIAL",
+            "Run search_clinical_trials or get_trial_details for it first, or pass nctId as null for a general question.",
+          );
+        }
+
+        const store = useTrialStore.getState();
+        const saved = store.addQuestion({
+          question,
+          nctId: nctId ?? null,
+          rationale: rationale ?? null,
+          source: "agent",
+        });
+        store.noteAgentAction(`Added a question for the study team`);
+
+        const questions = useTrialStore.getState().questions;
+
+        return ok(
+          `Saved the question${nctId ? ` for ${nctId}` : ""}. The person can now see it in the "Questions for the study team" list (${questions.length} total) and can remove or print it.`,
+          {
+            questionId: saved.id,
+            questionCount: questions.length,
+            question: saved,
+            verification: { visibleInUi: true, removableByHuman: true },
+          },
+        );
+      }),
+    },
+  ];
+}
+
+/**
+ * Splits the free-text eligibility block into leading inclusion and exclusion
+ * lines, quoted verbatim.
+ *
+ * This is presentational only: it never re-words or evaluates a criterion. If
+ * the text does not use recognisable headings, everything is reported as
+ * inclusion so nothing is silently dropped.
+ */
+export function splitCriteria(
+  text: string | null,
+  limit = 4,
+): { inclusion: string[]; exclusion: string[] } {
+  if (!text) return { inclusion: [], exclusion: [] };
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
+    .filter((l) => l.length > 2);
+
+  const inclusion: string[] = [];
+  const exclusion: string[] = [];
+  let bucket: "inclusion" | "exclusion" = "inclusion";
+
+  for (const line of lines) {
+    if (/^inclusion\b/i.test(line)) {
+      bucket = "inclusion";
+      continue;
+    }
+    if (/^exclusion\b/i.test(line)) {
+      bucket = "exclusion";
+      continue;
+    }
+    (bucket === "inclusion" ? inclusion : exclusion).push(line);
+  }
+
+  return { inclusion: inclusion.slice(0, limit), exclusion: exclusion.slice(0, limit) };
+}

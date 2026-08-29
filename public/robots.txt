@@ -1,0 +1,96 @@
+# TrialBridge — private beta.
+#
+# This site is not intended for public discovery or indexing. It is shared by
+# direct link with named testers only.
+#
+# Note for anyone reading this file: robots.txt is an advisory convention that
+# well-behaved crawlers choose to honour. It is NOT an access control. The
+# actual protection on this deployment is HTTP authentication (see src/proxy.ts)
+# plus the `X-Robots-Tag: noindex, nofollow` response header sent on every
+# route, which search engines honour even when a page is reached directly.
+
+User-agent: *
+Disallow: /
+
+# Named crawlers, listed explicitly so there is no ambiguity.
+User-agent: Googlebot
+Disallow: /
+
+User-agent: Googlebot-Image
+Disallow: /
+
+User-agent: Bingbot
+Disallow: /
+
+User-agent: DuckDuckBot
+Disallow: /
+
+User-agent: Baiduspider
+Disallow: /
+
+User-agent: YandexBot
+Disallow: /
+
+User-agent: Slurp
+Disallow: /
+
+User-agent: facebookexternalhit
+Disallow: /
+
+User-agent: Twitterbot
+Disallow: /
+
+User-agent: LinkedInBot
+Disallow: /
+
+User-agent: ia_archiver
+Disallow: /
+
+User-agent: archive.org_bot
+Disallow: /
+
+# AI and dataset crawlers.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: OAI-SearchBot
+Disallow: /
+
+User-agent: ChatGPT-User
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: Applebot
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: Meta-ExternalAgent
+Disallow: /
+
+User-agent: cohere-ai
+Disallow: /
+
+User-agent: Diffbot
+Disallow: /
+
+User-agent: Omgilibot
+Disallow: /

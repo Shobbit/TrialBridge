@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/*
+ * TrialBridge design tokens.
+ *
+ * Colours are defined once on :root and re-declared under the dark scheme so
+ * every surface stays legible in both. Semantic finding colours (match /
+ * mismatch / unknown) are intentionally distinguishable by icon and label as
+ * well as hue, so the analysis is readable without colour vision.
+ */
+:root {
+  --tb-bg: #f6f7f9;
+  --tb-surface: #ffffff;
+  --tb-surface-2: #f1f3f6;
+  --tb-border: #dfe3ea;
+  --tb-border-strong: #c4cbd6;
+  --tb-text: #14181f;
+  --tb-text-muted: #5a6472;
+  --tb-accent: #1f5fa9;
+  --tb-accent-soft: #e8f0fa;
+  --tb-match: #14663f;
+  --tb-match-soft: #e4f4ec;
+  --tb-mismatch: #9a3412;
+  --tb-mismatch-soft: #fdeee6;
+  --tb-unknown: #5b4a1f;
+  --tb-unknown-soft: #fbf3dd;
+  --tb-agent: #5b3fa9;
+  --tb-agent-soft: #efe9fb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tb-bg: #0e1117;
+    --tb-surface: #161b23;
+    --tb-surface-2: #1d232d;
+    --tb-border: #2a323d;
+    --tb-border-strong: #3d4756;
+    --tb-text: #e8ecf1;
+    --tb-text-muted: #98a3b3;
+    --tb-accent: #74aae8;
+    --tb-accent-soft: #16283d;
+    --tb-match: #7ad6a7;
+    --tb-match-soft: #10261c;
+    --tb-mismatch: #f0a882;
+    --tb-mismatch-soft: #2e1a12;
+    --tb-unknown: #e0c876;
+    --tb-unknown-soft: #2a2413;
+    --tb-agent: #b79cf0;
+    --tb-agent-soft: #221b33;
+  }
+}
+
+@theme inline {
+  --color-tb-bg: var(--tb-bg);
+  --color-tb-surface: var(--tb-surface);
+  --color-tb-surface-2: var(--tb-surface-2);
+  --color-tb-border: var(--tb-border);
+  --color-tb-border-strong: var(--tb-border-strong);
+  --color-tb-text: var(--tb-text);
+  --color-tb-muted: var(--tb-text-muted);
+  --color-tb-accent: var(--tb-accent);
+  --color-tb-accent-soft: var(--tb-accent-soft);
+  --color-tb-match: var(--tb-match);
+  --color-tb-match-soft: var(--tb-match-soft);
+  --color-tb-mismatch: var(--tb-mismatch);
+  --color-tb-mismatch-soft: var(--tb-mismatch-soft);
+  --color-tb-unknown: var(--tb-unknown);
+  --color-tb-unknown-soft: var(--tb-unknown-soft);
+  --color-tb-agent: var(--tb-agent);
+  --color-tb-agent-soft: var(--tb-agent-soft);
+}
+
+body {
+  background: var(--tb-bg);
+  color: var(--tb-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible focus ring on every interactive element, for keyboard navigation. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--tb-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Screen-reader-only text that becomes visible when focused (skip link). */
+.sr-only-focusable:not(:focus):not(:active) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Brief highlight when an agent writes to a region the human is watching. */
+@keyframes tb-flash {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tb-agent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+.tb-flash {
+  animation: tb-flash 1.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-flash {
+    animation: none;
+  }
+}
