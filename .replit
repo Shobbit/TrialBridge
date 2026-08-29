@@ -1,0 +1,41 @@
+# Replit configuration for TrialBridge (Next.js 16, App Router).
+#
+# Adapted from the official Next.js Replit template:
+# https://github.com/nextjs/deploy-replit
+#
+# Two things differ from a plain local run and matter on Replit:
+#
+#  1. The server must bind 0.0.0.0, not localhost. Replit routes external
+#     traffic into the container, so a process listening only on the loopback
+#     interface is unreachable and the deployment appears to hang.
+#  2. The port must come from $PORT, which Replit assigns. `next start` reads
+#     that variable natively, so `start:replit` only sets the host and leaves
+#     the port alone. Do NOT write `-p ${PORT:-3000}` in the npm script: npm
+#     runs scripts through cmd.exe on Windows, which does not expand it, and
+#     Next then rejects the literal string as an invalid port. Verified locally
+#     with PORT=3333 — the server bound 0.0.0.0:3333.
+#
+# `deploymentTarget = "cloudrun"` is Replit Autoscale. It is the right
+# choice here because this app has server-side API routes (/api/trials/*) and
+# therefore needs a Node server — a static deployment would serve the pages but
+# every search would fail with a 404.
+
+run = "npm run dev -- -H 0.0.0.0"
+entrypoint = "src/app/page.tsx"
+hidden = [".config", ".next", "node_modules"]
+modules = ["nodejs-22"]
+
+[nix]
+channel = "stable-24_11"
+
+[deployment]
+build = ["npm", "run", "build"]
+run = ["npm", "run", "start:replit"]
+deploymentTarget = "cloudrun"
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[env]
+NEXT_TELEMETRY_DISABLED = "1"
