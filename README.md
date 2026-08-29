@@ -166,6 +166,58 @@ therefore work only as long as no custom header is ever added. Proxying through
 `/api/trials/*` removes that constraint, centralises rate-limit and timeout handling, and allows
 response caching. No secrets are involved: neither upstream API requires a key.
 
+## Private beta: keeping the site unlisted and gated
+
+The deployment is meant to be reachable only by people who have the link *and* the
+password. Four layers, strongest first:
+
+| Layer | File | What it actually does |
+| --- | --- | --- |
+| **HTTP Basic auth** | `src/proxy.ts` | **The real access control.** Blocks every page, asset, JS bundle and API route without the shared password. Active only when `SITE_PASSWORD` is set. |
+| `X-Robots-Tag` header | `next.config.ts` | `noindex, nofollow, noarchive, nosnippet, noimageindex` on **every** response, including JSON. Honoured even when a URL is reached directly. |
+| `<meta name="robots">` | `src/app/layout.tsx` | Same directives in the HTML itself. |
+| `robots.txt` | `public/robots.txt` | `Disallow: /` for all agents, plus ~25 named crawlers including GPTBot, ClaudeBot, PerplexityBot, CCBot and Bytespider. |
+
+> **Be clear about what robots.txt is.** It is a *convention*, not a lock — it asks
+> well-behaved crawlers not to index the site, and they comply. It stops nothing else.
+> A scraper that ignores it faces no obstacle from robots.txt at all. The password is
+> what actually prevents access, which is why it is layer one.
+
+### Turning the gate on
+
+On your host, set an environment variable and redeploy:
+
+```
+SITE_PASSWORD=<long random string>
+SITE_USERNAME=beta            # optional, defaults to "beta"
+```
+
+Generate a password with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+```
+
+Visitors then get a browser login dialog. Local development is unaffected: with
+`SITE_PASSWORD` unset the gate is inert, so `npm run dev` never prompts.
+
+**To reopen the site** (for example when handing the URL to challenge judges), delete
+`SITE_PASSWORD` from the host and redeploy. Nothing else changes.
+
+Behaviour is pinned by `test/access-control.test.ts` (13 tests) and was verified against
+a running production server: unauthenticated requests to `/` and `/api/trials/search`
+return 401, correct credentials return 200, and `/robots.txt` stays readable so crawlers
+can see the disallow.
+
+### Limits worth knowing
+
+- The credential is **shared**, not per-tester. Anyone with it has full access, and you
+  cannot tell testers apart. Rotate it by changing the variable and redeploying.
+- Basic credentials are base64, not encrypted — **only ever serve over HTTPS**. Vercel
+  and Replit both provide it automatically.
+- A password-gated URL cannot be reviewed by anyone you have not given the password to.
+  Decide before submission whether judges need it open.
+
 ## Deployment
 
 ### Vercel

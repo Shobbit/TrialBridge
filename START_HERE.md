@@ -100,14 +100,41 @@ npm run lint && npm run typecheck && npm run build
 
 ---
 
-## 4. Ship it
+## 4. Ship it — as a *private* beta
 
 ```bash
 npm i -g vercel
 vercel --prod
 ```
 
-No environment variables. Copy the HTTPS URL into `SUBMISSION.md`.
+Then lock it down before sharing the link. In **Vercel → Settings → Environment Variables**:
+
+| Variable | Value |
+| --- | --- |
+| `SITE_PASSWORD` | a long random string (see below) |
+| `SITE_USERNAME` | `beta` (optional) |
+| `GEOCODER_USER_AGENT` | `TrialBridge/1.0 (+mailto:your@email.com)` |
+
+Generate the password:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
+```
+
+**Redeploy** after setting them. Now the site asks for a browser login, and it is
+`noindex` at three levels — it will not appear in Google or any AI crawler's index.
+
+Send your tester: the URL, the username, the password, and
+[MANUAL_TEST_CHECKLIST.md](./MANUAL_TEST_CHECKLIST.md).
+
+> **Make the GitHub repo private too.** A public repo publishes the code regardless of
+> what the deployed site does. Flip it to public only when the challenge requires it.
+
+> **Before judging:** a password-gated site cannot be reviewed. Delete `SITE_PASSWORD`
+> and redeploy when you are ready for judges — or give them the credentials explicitly
+> if the submission form allows it.
+
+Copy the HTTPS URL into `SUBMISSION.md`.
 
 ---
 
