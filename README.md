@@ -5,7 +5,7 @@
 TrialBridge is a [WebMCP](https://learn.chatgpt.com/docs/webmcp) application. It searches the live
 [ClinicalTrials.gov API v2](https://clinicaltrials.gov/data-api/api), explains what appears to line
 up with the details you enter, what appears not to, and what remains unknown — and exposes all of
-that to a browser agent through eight `document.modelContext.registerTool` tools that operate on the
+that to a browser agent through ten `document.modelContext.registerTool` tools that operate on the
 *same live application state* the human sees.
 
 > **This is not medical advice.** TrialBridge does not diagnose conditions, recommend treatment, or
@@ -23,7 +23,7 @@ share one store**:
 ```
                  ┌──────────────────────────────┐
   Browser agent ─┤  document.modelContext       │
-  (ChatGPT / Chrome)  .registerTool(...) × 8    │
+  (ChatGPT / Chrome)  .registerTool(...) × 10   │
                  └──────────────┬───────────────┘
                                 │  both call the same functions
                  ┌──────────────▼───────────────┐
@@ -39,7 +39,7 @@ share one store**:
 When the agent changes a filter, runs a search, or shortlists a study, the person sees it on screen
 immediately — because there is no second copy of the state to synchronise.
 
-## The eight tools
+## The ten tools
 
 | Tool | Access | What it does |
 | --- | --- | --- |
@@ -51,6 +51,8 @@ immediately — because there is no second copy of the state to synchronise.
 | `remove_shortlisted_trial` | write, destructive | Removes a study from the shortlist. |
 | `compare_shortlisted_trials` | read-only | Structured side-by-side comparison; switches the page to comparison view. |
 | `save_screening_question` | write | Adds a question to the visible list for the study team. |
+| `start_trial_prescreening` | write | Opens a guided pre-screening session for one study and returns its criteria, each quoted verbatim with a stable id. |
+| `record_prescreening_responses` | write | Records answers plus the visiting agent's cautious per-criterion comparison, shown beside the verbatim criterion. |
 
 Every tool declares a narrow JSON Schema with `additionalProperties: false`, an output schema,
 correct read-only/destructive annotations, and returns both human-readable `content` and
@@ -74,13 +76,26 @@ ever appear fully cleared. This is enforced by tests in `test/match.test.ts`.
 
 ## Privacy
 
-- **No account, no database, no server-side storage.** Profile, shortlist and questions live in
-  `localStorage` only.
+What is guaranteed:
+
+- **No account, no database, no server-side persistence.** Profile, shortlist, questions and the
+  pre-screening session live in `localStorage` only.
 - **No direct identifiers are collected** — no name, email, date of birth, or medical record number.
   Age is a whole number; sex is optional and collected only because trials themselves restrict on it.
-- Only the coarse search terms needed for one registry query ever leave the device.
-- A **"Clear my information"** button wipes memory and local storage.
-- All fixture data in tests is synthetic. No real patient information appears anywhere.
+- **Pre-screening answers are never sent to ClinicalTrials.gov**, and never sent to TrialBridge's own
+  search API. Neither are age or sex. Only the coarse search terms needed for one registry query are
+  transmitted at all. Asserted in `test/privacy.test.ts` and `test/prescreening.test.ts`.
+- A **"Clear my information"** button wipes everything, including any pre-screening session.
+- All fixtures, tests and demonstrations use **fictional information only**.
+
+What is **not** claimed:
+
+> Pre-screening is a conversation with a browser AI agent, so it would be wrong to say the answers
+> "never leave the browser". When you run the pre-screening workflow, the agent reads the criteria
+> from the page and supplies the questions, answers and comparisons that get stored — so those
+> exchanges pass through whoever provides your agent, under their terms. TrialBridge neither
+> transmits nor stores them anywhere else. **While TrialBridge is in beta, use fictional information
+> only.**
 
 ## Data sources
 
@@ -129,7 +144,7 @@ npm run dev          # http://localhost:3000
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
 | `npm start` | Serve the production build |
-| `npm test` | Run the Vitest suite (110 tests) |
+| `npm test` | Run the Vitest suite (232 tests) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` | ESLint |
 

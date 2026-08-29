@@ -19,6 +19,8 @@ const EXPECTED_TOOLS = [
   "remove_shortlisted_trial",
   "compare_shortlisted_trials",
   "save_screening_question",
+  "start_trial_prescreening",
+  "record_prescreening_responses",
 ] as const;
 
 function tool(name: string): ToolDescriptor {
@@ -55,7 +57,7 @@ function resetStore() {
 // --------------------------------------------------------------------------
 
 describe("tool declarations", () => {
-  it("registers exactly the eight documented tools", () => {
+  it("registers exactly the ten documented tools", () => {
     expect(createTools().map((t) => t.name)).toEqual([...EXPECTED_TOOLS]);
   });
 
@@ -88,6 +90,8 @@ describe("tool declarations", () => {
       "shortlist_trial",
       "remove_shortlisted_trial",
       "save_screening_question",
+      "start_trial_prescreening",
+      "record_prescreening_responses",
     ];
     for (const name of readOnly) {
       expect(tool(name).annotations?.readOnlyHint, name).toBe(true);

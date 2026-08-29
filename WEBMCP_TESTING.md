@@ -1,6 +1,6 @@
 # WebMCP testing guide
 
-Exact instructions for verifying that TrialBridge is a genuine WebMCP application — that all eight
+Exact instructions for verifying that TrialBridge is a genuine WebMCP application — that all ten
 tools register on the top-level page, and that every tool call is reflected in the visible interface.
 
 ---
@@ -85,14 +85,15 @@ Because registration happens in a React effect on mount, the shim must exist bef
 The simplest reliable approach is a DevTools **snippet** or a bookmarklet; alternatively, temporarily
 add the shim to the top of `src/app/layout.tsx` during testing.
 
-5. Confirm all eight tools registered:
+5. Confirm all ten tools registered:
 
 ```js
 [...window.__tbTools.keys()]
 // [
 //   "get_search_profile", "update_search_profile", "search_clinical_trials",
 //   "get_trial_details", "shortlist_trial", "remove_shortlisted_trial",
-//   "compare_shortlisted_trials", "save_screening_question"
+//   "compare_shortlisted_trials", "save_screening_question",
+//   "start_trial_prescreening", "record_prescreening_responses"
 // ]
 ```
 
@@ -110,10 +111,10 @@ document.querySelectorAll('iframe').length   // 0
 Requires **both** flags from section 0 and a Chrome relaunch.
 
 1. Open <http://localhost:3000>.
-2. The badge near the top of the page should read **"WebMCP active — 8 tools registered"**.
+2. The badge near the top of the page should read **"WebMCP active — 10 tools registered"**.
    If it still says *not available*, one of the two flags is off or Chrome was not relaunched.
 3. Open **DevTools → Application → WebMCP**.
-4. Confirm all eight tools are listed:
+4. Confirm all ten tools are listed:
 
    - [ ] `get_search_profile`
    - [ ] `update_search_profile`
@@ -123,6 +124,8 @@ Requires **both** flags from section 0 and a Chrome relaunch.
    - [ ] `remove_shortlisted_trial`
    - [ ] `compare_shortlisted_trials`
    - [ ] `save_screening_question`
+   - [ ] `start_trial_prescreening`
+   - [ ] `record_prescreening_responses`
 
 5. Check that each entry shows its description and input schema, and that the read-only tools are
    distinguishable from the write tools.
@@ -160,6 +163,8 @@ Then run **`search_clinical_trials`** with `{}` and confirm real trial cards app
 | `remove_shortlisted_trial` | ☐ | ☐ | ☐ | |
 | `compare_shortlisted_trials` | ☐ | ☐ | ☐ | |
 | `save_screening_question` | ☐ | ☐ | ☐ | |
+| `start_trial_prescreening` | ☐ | ☐ | ☐ | |
+| `record_prescreening_responses` | ☐ | ☐ | ☐ | |
 
 > Chrome version tested: ______   Date: ______
 
@@ -258,6 +263,65 @@ await call('save_screening_question', {
 
 ✅ The question appears under "Questions for the study team", tagged **Suggested by agent**.
 
+### 2.9 Guided pre-screening — the sequence that matters most
+
+```js
+await call('start_trial_prescreening', { nctId: id });
+```
+
+✅ A **Pre-screening** panel appears, scoped to that one study.
+✅ It shows the NCT id linking to ClinicalTrials.gov, the retrieval timestamp, and inclusion and
+exclusion criteria **quoted verbatim**.
+✅ A visible beta warning says to use fictional information only.
+✅ There is **no** suggested-question list, no progress bar and no count of criteria met.
+
+Copy a `criterionId` from the result, then record a fictional answer:
+
+```js
+await call('record_prescreening_responses', {
+  nctId: id,
+  responses: [{
+    criterionId: '<paste a criterionId>',
+    questionAsked: 'Have you had any prior treatment for this condition?',
+    patientAnswer: 'No, none so far',
+    answerType: 'text',
+    comparison: 'potential_conflict',
+    explanation: 'This criterion mentions prior therapy and you said you have had none, so it is worth raising with the study team.',
+  }],
+});
+```
+
+✅ The answer appears **directly beneath the criterion it refers to**.
+✅ It is labelled **"Agent-assisted preliminary comparison"**.
+✅ The question asked, your answer and the agent's note are all shown.
+
+Now confirm the code-enforced safety rules. Each of these must return `isError: true`:
+
+```js
+// An answer that was not given cannot support a conclusion.
+await call('record_prescreening_responses', { nctId: id, responses: [{
+  criterionId: '<id>', questionAsked: 'Have you had prior therapy?',
+  patientAnswer: null, answerType: 'unknown',
+  comparison: 'appears_consistent',      // ← rejected
+  explanation: 'Assuming none.' }] });
+
+// A criterion from another study cannot be written.
+await call('record_prescreening_responses', { nctId: id, responses: [{
+  criterionId: 'NCT99999999:inclusion:1', /* … */ }] });
+
+// Eligibility language, scores and treatment advice are refused.
+await call('record_prescreening_responses', { nctId: id, responses: [{
+  criterionId: '<id>', questionAsked: 'Any prior therapy?',
+  patientAnswer: 'No', answerType: 'text', comparison: 'appears_consistent',
+  explanation: 'You are eligible for this study.' }] });   // ← PROHIBITED_LANGUAGE
+```
+
+✅ Nothing is stored for any rejected call — check the panel is unchanged.
+✅ Recording an `unknown` or `skipped` answer with `comparison: 'unresolved'` **is** accepted and
+shows as *Still unknown*.
+
+Finally, select **Clear pre-screening** in the panel. ✅ The whole session disappears.
+
 ---
 
 ## 3. Verify error handling
@@ -320,7 +384,7 @@ With a WebMCP-capable agent on the page (ChatGPT desktop app's built-in browser,
 ## 7. Automated verification
 
 ```bash
-npm test        # 110 tests
+npm test        # 232 tests
 npm run lint
 npm run typecheck
 npm run build

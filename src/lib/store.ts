@@ -9,9 +9,11 @@ import {
   type SearchableRecruitmentStatus,
   type Trial,
 } from "./ctgov/types";
+import type { Criterion } from "./criteria";
 import {
   EMPTY_PROFILE,
   profileSchema,
+  type PreScreeningResponse,
   type ProfileUpdate,
   type ScreeningQuestion,
   type SearchInput,
@@ -41,6 +43,29 @@ export interface ShortlistEntry {
   source: "agent" | "human";
 }
 
+/**
+ * The single active pre-screening session.
+ *
+ * Deliberately one-at-a-time and scoped to one trial: this is a focused
+ * conversation about one study's published criteria, not a longitudinal
+ * patient record. There is no cross-trial reuse of answers — starting a
+ * session for another study replaces this one.
+ */
+export interface PreScreeningSession {
+  nctId: string;
+  trialTitle: string;
+  sourceUrl: string;
+  /** When the criteria were read from ClinicalTrials.gov. */
+  retrievedAt: string;
+  criteria: Criterion[];
+  /** False when the registry text could not be split; see `notice`. */
+  segmented: boolean;
+  notice: string | null;
+  /** Keyed by criterionId; one response per criterion, latest wins. */
+  responses: Record<string, PreScreeningResponse>;
+  startedAt: string;
+}
+
 interface TrialState {
   profile: SearchProfile;
   results: Trial[];
@@ -53,6 +78,8 @@ interface TrialState {
   questions: ScreeningQuestion[];
   /** NCT id whose detail panel is open, or null. */
   openTrialId: string | null;
+  /** The one active pre-screening session, or null. */
+  preScreening: PreScreeningSession | null;
   /** Bumped whenever an agent writes, so the UI can flash the changed region. */
   lastAgentActionAt: string | null;
   lastAgentAction: string | null;
@@ -67,6 +94,9 @@ interface TrialState {
   addQuestion: (question: Omit<ScreeningQuestion, "id" | "createdAt">) => ScreeningQuestion;
   removeQuestion: (id: string) => boolean;
   setOpenTrialId: (nctId: string | null) => void;
+  startPreScreening: (session: PreScreeningSession) => void;
+  recordPreScreeningResponses: (nctId: string, responses: PreScreeningResponse[]) => number;
+  clearPreScreening: () => void;
   noteAgentAction: (action: string) => void;
   clearEverything: () => void;
 }
@@ -90,6 +120,7 @@ export const useTrialStore = create<TrialState>()(
       shortlist: [],
       questions: [],
       openTrialId: null,
+      preScreening: null,
       lastAgentActionAt: null,
       lastAgentAction: null,
 
@@ -156,6 +187,41 @@ export const useTrialStore = create<TrialState>()(
 
       setOpenTrialId: (nctId) => set({ openTrialId: nctId }),
 
+      /** Replaces any existing session — only one trial is pre-screened at a time. */
+      startPreScreening: (session) => set({ preScreening: session }),
+
+      /**
+       * Merges responses into the active session.
+       *
+       * Responses naming a criterion that does not belong to the active study
+       * are ignored, so an answer can never be attached to the wrong trial.
+       * The caller validates and reports this too; the guard is repeated here
+       * because the store is the last line of defence.
+       *
+       * @returns how many responses were actually applied.
+       */
+      recordPreScreeningResponses: (nctId, responses) => {
+        const session = get().preScreening;
+        if (!session || session.nctId !== nctId) return 0;
+
+        const known = new Set(session.criteria.map((c) => c.criterionId));
+        const accepted = responses.filter((r) => known.has(r.criterionId));
+        if (!accepted.length) return 0;
+
+        set({
+          preScreening: {
+            ...session,
+            responses: {
+              ...session.responses,
+              ...Object.fromEntries(accepted.map((r) => [r.criterionId, r])),
+            },
+          },
+        });
+        return accepted.length;
+      },
+
+      clearPreScreening: () => set({ preScreening: null }),
+
       noteAgentAction: (action) =>
         set({ lastAgentAction: action, lastAgentActionAt: new Date().toISOString() }),
 
@@ -171,6 +237,7 @@ export const useTrialStore = create<TrialState>()(
           shortlist: [],
           questions: [],
           openTrialId: null,
+          preScreening: null,
           lastAgentActionAt: null,
           lastAgentAction: null,
         });
@@ -216,10 +283,16 @@ export const useTrialStore = create<TrialState>()(
         };
       },
       // Transient request state and cached upstream payloads are not persisted.
+      // The pre-screening session is persisted so a refresh does not destroy
+      // the answers someone has just given. It is the most sensitive data the
+      // app holds, so it stays in this browser only, is never sent to
+      // ClinicalTrials.gov or the search API, and is wiped by both the
+      // session's own Clear control and "Clear my information".
       partialize: (s) => ({
         profile: s.profile,
         shortlist: s.shortlist,
         questions: s.questions,
+        preScreening: s.preScreening,
       }),
     },
   ),

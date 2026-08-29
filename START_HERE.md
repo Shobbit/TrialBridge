@@ -34,8 +34,8 @@ Chrome 149+ required — you have 152.
 2. `chrome://flags/#devtools-webmcp-support` → **Enabled**
 3. **Relaunch Chrome** (flag changes don't affect already-open windows)
 4. Open http://localhost:3000 — the badge should turn green:
-   **"WebMCP active — 8 tools registered"**
-5. Open **DevTools → Application → WebMCP** and confirm all eight tools are listed.
+   **"WebMCP active — 10 tools registered"**
+5. Open **DevTools → Application → WebMCP** and confirm all ten tools are listed.
 6. Run a read tool: `get_search_profile` with `{}` → expect `readyToSearch: false`. Page must not change.
 7. Run a write tool: `update_search_profile` with
    `{"condition":"metastatic melanoma","age":54,"city":"Chicago","state":"Illinois"}`
@@ -65,7 +65,7 @@ Then in the Console:
 ```js
 const call = (n, a = {}) => window.__tbTools.get(n).execute(a);
 
-[...window.__tbTools.keys()]                    // all 8 tool names
+[...window.__tbTools.keys()]                    // all 10 tool names
 await call('update_search_profile', { condition: 'metastatic melanoma', age: 54, city: 'Chicago' });
 await call('search_clinical_trials', {});
 ```
@@ -90,7 +90,7 @@ For a public URL, deploy first (`vercel --prod`) — it must be HTTPS.
 npm test
 ```
 
-110 tests. The 17 in `test/integration.test.tsx` render the real app, register the real tools through
+232 tests. Those in `test/integration.test.tsx` render the real app, register the real tools through
 a mock `document.modelContext`, call them the way an agent would, and assert the **visible DOM**
 changed. This is your evidence that tools and UI share live state.
 
@@ -145,7 +145,7 @@ Copy the HTTPS URL into `SUBMISSION.md`.
 | Imperative `document.modelContext.registerTool` on the top-level page | `src/webmcp/WebMcpProvider.tsx`, mounted by `src/app/page.tsx` |
 | Not in an iframe | Verify: `document.querySelectorAll('iframe').length === 0` |
 | Not just form automation / not a chatbot | There is no chatbot. Tools call the same actions as the buttons. |
-| 8 tools with narrow schemas, `additionalProperties: false`, annotations, structured output, error handling | `src/webmcp/tools.ts` |
+| 10 tools with narrow schemas, `additionalProperties: false`, annotations, structured output, error handling | `src/webmcp/tools.ts` |
 | Tools and UI share live state | `src/lib/store.ts` + `src/lib/actions.ts`; proven in `test/integration.test.tsx` |
 | Live ClinicalTrials.gov v2 data, no fabrication | `src/lib/ctgov/*`, `src/app/api/trials/*` |
 | Never diagnoses / never confirms eligibility | `src/lib/match.ts`; enforced by `test/match.test.ts` |

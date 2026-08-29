@@ -138,3 +138,81 @@ export interface ScreeningQuestion {
   createdAt: string;
   source: "agent" | "human";
 }
+
+// ---------------------------------------------------------------------------
+// Pre-screening
+// ---------------------------------------------------------------------------
+
+/**
+ * How the visiting agent characterises one answer against one criterion.
+ *
+ * TrialBridge cannot compute this — it performs no clinical interpretation of
+ * free-text criteria. The agent supplies the comparison; this app stores it,
+ * labels it as agent-assisted, and displays it beside the verbatim criterion.
+ */
+export const comparisonSchema = z.enum([
+  "appears_consistent",
+  "potential_conflict",
+  "unresolved",
+]);
+export type Comparison = z.infer<typeof comparisonSchema>;
+
+export const answerTypeSchema = z.enum(["text", "number", "boolean", "unknown", "skipped"]);
+export type AnswerType = z.infer<typeof answerTypeSchema>;
+
+/** Bounded so a single call cannot flood the session or the display. */
+export const MAX_RESPONSES_PER_CALL = 10;
+
+const responseBase = z.object({
+  criterionId: z.string().trim().min(3).max(120),
+  questionAsked: z.string().trim().min(5).max(400),
+  patientAnswer: z.union([z.string().trim().max(400), z.number(), z.boolean(), z.null()]),
+  answerType: answerTypeSchema,
+  comparison: comparisonSchema,
+  explanation: z.string().trim().min(5).max(600),
+});
+
+/**
+ * A single recorded response.
+ *
+ * The refinement enforces the rule that makes this safe: an answer the person
+ * did not actually give cannot support a conclusion. If the answer is unknown,
+ * skipped, or absent, the comparison must stay `unresolved`. The contradiction
+ * is rejected outright rather than silently corrected, so the agent is told
+ * plainly and can restate its own reasoning.
+ */
+export const prescreeningResponseSchema = responseBase.refine(
+  (r) => {
+    const answerIsAbsent =
+      r.answerType === "unknown" ||
+      r.answerType === "skipped" ||
+      r.patientAnswer === null ||
+      (typeof r.patientAnswer === "string" && r.patientAnswer.length === 0);
+    return !answerIsAbsent || r.comparison === "unresolved";
+  },
+  {
+    message:
+      "When answerType is 'unknown' or 'skipped', or patientAnswer is null or empty, comparison must be 'unresolved'. An answer that was not given cannot support 'appears_consistent' or 'potential_conflict'.",
+    path: ["comparison"],
+  },
+);
+
+export type PrescreeningResponseInput = z.infer<typeof prescreeningResponseSchema>;
+
+export const recordResponsesInputSchema = z.object({
+  nctId: nctIdSchema,
+  responses: z.array(prescreeningResponseSchema).min(1).max(MAX_RESPONSES_PER_CALL),
+});
+
+/** A response as stored and displayed, with provenance attached. */
+export interface PreScreeningResponse {
+  criterionId: string;
+  questionAsked: string;
+  patientAnswer: string | number | boolean | null;
+  answerType: AnswerType;
+  comparison: Comparison;
+  explanation: string;
+  recordedAt: string;
+}
+
+export type ResponseStatus = "unanswered" | "answered" | "skipped";

@@ -109,8 +109,8 @@ describe("buildSearchUrl", () => {
   });
 
   it("builds a single-study URL from an NCT id", () => {
-    expect(buildStudyUrl("NCT05361174")).toBe(
-      "https://clinicaltrials.gov/api/v2/studies/NCT05361174?format=json",
+    expect(buildStudyUrl("NCT00000001")).toBe(
+      "https://clinicaltrials.gov/api/v2/studies/NCT00000001?format=json",
     );
   });
 });

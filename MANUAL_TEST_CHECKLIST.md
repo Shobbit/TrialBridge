@@ -15,7 +15,7 @@ actually see what's described. If something doesn't match, note it — that's a 
       investigators can decide eligibility.
 - [ ] Below it, a **grey badge** says *"WebMCP not available in this browser"*.
       **This is correct and expected** in a normal browser — it is the required fallback notice.
-- [ ] Click **"What is this?"** next to the badge. It expands and lists eight tool names.
+- [ ] Click **"What is this?"** next to the badge. It expands and lists ten tool names.
 
 ## B. The form asks only for what it needs
 
@@ -55,11 +55,24 @@ app deciding your eligibility for you — which it must never do.
 - [ ] Confirm the helper text under the field explains it is optional and only used because some
       trials restrict enrolment by sex.
 
+## C3. Recruitment status — recruiting comes first
+
+- [ ] Under **Recruitment status**, **Recruiting now** is ticked by default and described as
+      recommended.
+- [ ] There is **no** checkbox for Completed, Terminated, Withdrawn, Suspended,
+      Active-not-recruiting, or Enrolling-by-invitation. Those cannot enrol you, so they are not
+      searchable at all.
+- [ ] Expand **Advanced status options**. Only **Not yet recruiting** appears, and it is clearly
+      labelled **not currently enrolling**.
+- [ ] Tick it, search again, and confirm results still load.
+- [ ] Untick both boxes. A message says searching will use "Recruiting now". Search anyway — you
+      still get recruiting studies, not closed ones.
+
 ## D. Check a result card
 
 Look at the first result.
 
-- [ ] It has a title and an **NCT number** (like `NCT05361174`).
+- [ ] It has a title and an **NCT number** (like `NCT01234567`).
 - [ ] It shows a status such as **Recruiting**.
 - [ ] It shows a phase, a sponsor, an age range, and a location.
 - [ ] It shows a distance like *"~82 mi to nearest site"*.
@@ -133,6 +146,8 @@ Look at the first result.
       the NIH, or any government agency.
 - [ ] It credits **© OpenStreetMap contributors** with a working link.
 - [ ] It says your information is stored only in this browser.
+- [ ] It explains that a browser AI agent, if you use one, can read and write what is on the page —
+      including pre-screening answers — and that beta testing should use fictional information only.
 
 ---
 
@@ -141,5 +156,6 @@ Look at the first result.
 Note down: what you clicked, what you expected, what actually happened, and which browser you used.
 A screenshot helps.
 
-**Note:** sections A–K test the ordinary website. Testing the AI-agent half needs the Chrome flags
+**Note:** sections A–K test the ordinary website. The pre-screening panel only appears when an AI
+agent starts a session, so it is covered in the WebMCP guide rather than here. Testing the AI-agent half needs the Chrome flags
 or the ChatGPT desktop app — see [START_HERE.md](./START_HERE.md).

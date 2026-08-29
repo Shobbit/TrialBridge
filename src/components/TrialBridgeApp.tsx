@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useTrialStore } from "@/lib/store";
 import { AgentStatus } from "./AgentStatus";
+import { PreScreeningPanel } from "./PreScreeningPanel";
 import { ProfileForm } from "./ProfileForm";
 import { QuestionsPanel } from "./QuestionsPanel";
 import { ResultsPanel } from "./ResultsPanel";
@@ -25,9 +26,10 @@ function ClearDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm:
           Clear everything from this browser?
         </h2>
         <p id="clear-body" className="mt-1.5 text-xs text-tb-muted">
-          This permanently removes your search details, search results, shortlist and saved
-          questions from this browser. Nothing was ever stored anywhere else, so there is no copy
-          to recover.
+          This permanently removes your search details, search results, shortlist, saved questions
+          and any pre-screening session from this browser. TrialBridge stored no copy anywhere
+          else. If you used a browser AI agent, anything you told it is held in that agent&rsquo;s
+          own conversation history, which this button cannot reach.
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" onClick={onCancel}>
@@ -95,7 +97,11 @@ export function TrialBridgeApp() {
           <ShortlistPanel />
           <QuestionsPanel />
         </div>
-        <ResultsPanel />
+        <div className="space-y-5">
+          {/* Only rendered while a pre-screening session is open. */}
+          <PreScreeningPanel />
+          <ResultsPanel />
+        </div>
       </div>
 
       <footer className="mt-8 border-t border-tb-border pt-4 text-[11px] leading-relaxed text-tb-muted">
@@ -146,9 +152,21 @@ export function TrialBridgeApp() {
           . Distances are approximate straight-line estimates, not travel distances.
         </p>
         <p className="mt-2">
-          Your search details, shortlist and questions are stored only in this browser&rsquo;s local
-          storage. There is no account and no server-side database. Only the coarse search terms
-          needed for one registry query ever leave your device.
+          Your search details, shortlist, questions and pre-screening answers are stored only in
+          this browser&rsquo;s local storage. There is no account, no database and no server-side
+          persistence. Of the information you enter, only the coarse search terms needed for one
+          registry query are ever sent to TrialBridge&rsquo;s search API, and{" "}
+          <strong>
+            nothing you enter is ever sent to ClinicalTrials.gov beyond those search terms
+          </strong>
+          . Your age, sex and pre-screening answers are never sent to either.
+        </p>
+        <p className="mt-2">
+          <strong>One important exception.</strong> If you use a browser AI agent with this page,
+          that agent can read and write what is on it — including pre-screening questions and
+          answers — because that is how the pre-screening workflow works. Those exchanges are
+          handled by whoever provides your agent, under their terms, not by TrialBridge. While
+          TrialBridge is in beta, use fictional information only.
         </p>
       </footer>
 

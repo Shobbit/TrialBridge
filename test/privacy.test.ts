@@ -146,7 +146,7 @@ describe("no direct identifiers are collected anywhere", () => {
 });
 
 describe("local storage holds only what was promised", () => {
-  it("persists nothing beyond profile, shortlist and questions", () => {
+  it("persists nothing beyond profile, shortlist, questions and the pre-screening session", () => {
     useTrialStore.getState().setProfile({ condition: "asthma", age: 40 });
     useTrialStore.getState().addQuestion({
       question: "How often are study visits?",
@@ -160,6 +160,7 @@ describe("local storage holds only what was promised", () => {
 
     const persisted = JSON.parse(raw!) as { state: Record<string, unknown> };
     expect(Object.keys(persisted.state).sort()).toEqual([
+      "preScreening",
       "profile",
       "questions",
       "shortlist",
