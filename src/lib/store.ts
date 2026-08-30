@@ -103,6 +103,57 @@ interface TrialState {
 
 const STORAGE_KEY = "trialbridge:v1";
 
+/** Current shape version of the persisted state. */
+export const PERSIST_VERSION = 2;
+
+/**
+ * Migrates state saved by an earlier build.
+ *
+ * **v1 → v2: searching was narrowed to enrolling statuses only.**
+ *
+ * A browser that used the earlier build may hold statuses such as `COMPLETED`
+ * in its saved profile. Feeding that straight into `profileSchema` on rehydrate
+ * would throw, and the app would fail to start — for existing users only, while
+ * working perfectly in any fresh browser. So unsupported values are dropped
+ * here, and the default is restored if nothing survives.
+ *
+ * Exported so it can be tested directly rather than by a test that reimplements
+ * the same filtering and would therefore still pass if this function were
+ * deleted.
+ *
+ * Must never throw: anything it cannot interpret is replaced with a value the
+ * schema accepts, because an exception here blocks hydration entirely.
+ */
+export function migratePersistedState(persisted: unknown, version: number): unknown {
+  // Not an object at all (null, a string, a corrupted entry): discard it and
+  // let the store fall back to its own defaults.
+  if (persisted === null || typeof persisted !== "object" || Array.isArray(persisted)) {
+    return {};
+  }
+
+  const state = persisted as Record<string, unknown>;
+  if (version >= PERSIST_VERSION) return state;
+
+  const rawProfile = state.profile;
+  const profile =
+    rawProfile && typeof rawProfile === "object" && !Array.isArray(rawProfile)
+      ? (rawProfile as Record<string, unknown>)
+      : {};
+
+  const previous = Array.isArray(profile.recruitmentStatuses) ? profile.recruitmentStatuses : [];
+  const kept = previous.filter((s): s is SearchableRecruitmentStatus =>
+    (SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).includes(s as string),
+  );
+
+  return {
+    ...state,
+    profile: {
+      ...profile,
+      recruitmentStatuses: kept.length ? kept : [DEFAULT_SEARCH_STATUS],
+    },
+  };
+}
+
 function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `q_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -253,35 +304,8 @@ export const useTrialStore = create<TrialState>()(
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => localStorage),
-      version: 2,
-      /**
-       * v1 → v2: searching was narrowed to enrolling statuses only.
-       *
-       * A browser that used the earlier build may hold statuses such as
-       * COMPLETED in its saved profile. Rehydrating that straight into
-       * `profileSchema` would throw and leave the app stuck, so unsupported
-       * values are dropped here and the default restored if nothing survives.
-       */
-      migrate: (persisted, version) => {
-        const state = (persisted ?? {}) as Record<string, unknown>;
-        if (version >= 2) return state;
-
-        const profile = (state.profile ?? {}) as Record<string, unknown>;
-        const previous = Array.isArray(profile.recruitmentStatuses)
-          ? profile.recruitmentStatuses
-          : [];
-        const kept = previous.filter((s): s is SearchableRecruitmentStatus =>
-          (SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).includes(s as string),
-        );
-
-        return {
-          ...state,
-          profile: {
-            ...profile,
-            recruitmentStatuses: kept.length ? kept : [DEFAULT_SEARCH_STATUS],
-          },
-        };
-      },
+      version: PERSIST_VERSION,
+      migrate: migratePersistedState,
       // Transient request state and cached upstream payloads are not persisted.
       // The pre-screening session is persisted so a refresh does not destroy
       // the answers someone has just given. It is the most sensitive data the

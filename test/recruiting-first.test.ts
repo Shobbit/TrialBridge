@@ -7,7 +7,6 @@ import {
 import { EMPTY_PROFILE, searchInputSchema } from "@/lib/schemas";
 import { buildSearchUrl } from "@/lib/ctgov/query";
 import { createTools } from "@/webmcp/tools";
-import { useTrialStore } from "@/lib/store";
 
 /**
  * Recruiting-first search.
@@ -200,17 +199,11 @@ describe("WebMCP tool schemas", () => {
 });
 
 describe("stored profiles from the previous build", () => {
-  it("drops statuses that are no longer searchable instead of breaking the app", () => {
-    // A browser that used the earlier build may hold COMPLETED in localStorage.
-    // The persist migration strips it; setProfile must then accept the result.
-    const migrated = ["RECRUITING", "COMPLETED"].filter((s) =>
-      (SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).includes(s),
-    );
-    expect(migrated).toEqual(["RECRUITING"]);
-
-    const applied = useTrialStore
-      .getState()
-      .setProfile({ recruitmentStatuses: migrated as ("RECRUITING" | "NOT_YET_RECRUITING")[] });
-    expect(applied.recruitmentStatuses).toEqual(["RECRUITING"]);
+  // The v1 -> v2 persistence migration is covered directly, against the real
+  // production function, in test/migration.test.ts. It is deliberately not
+  // re-tested here: an inline reimplementation of the filtering would keep
+  // passing even if the migration were deleted.
+  it("is covered by test/migration.test.ts against the production function", () => {
+    expect(SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).not.toContain("COMPLETED");
   });
 });
