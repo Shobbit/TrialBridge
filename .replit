@@ -60,10 +60,10 @@ args = "TrialBridge Next.js"
 name = "TrialBridge Next.js"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run dev -- -H 0.0.0.0"
-waitForPort = 3000
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run start:replit"
+waitForPort = 3000
