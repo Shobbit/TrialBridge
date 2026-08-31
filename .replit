@@ -37,5 +37,33 @@ deploymentTarget = "cloudrun"
 localPort = 3000
 externalPort = 80
 
+[[ports]]
+localPort = 5000
+externalPort = 5000
+
 [env]
 NEXT_TELEMETRY_DISABLED = "1"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "TrialBridge Next.js"
+
+[[workflows.workflow]]
+name = "TrialBridge Next.js"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev -- -H 0.0.0.0"
+waitForPort = 3000
+
+[workflows.workflow.metadata]
+outputType = "console"
