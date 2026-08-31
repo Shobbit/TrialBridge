@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
 import { useTrialStore } from "@/lib/store";
-import { ComparisonView } from "./ComparisonView";
 import { Badge, Button, EmptyState, Panel, StatusBadge, phaseLabel } from "./primitives";
 
 /**
@@ -11,11 +9,22 @@ import { Badge, Button, EmptyState, Panel, StatusBadge, phaseLabel } from "./pri
  * Agent-added entries are visibly marked so the person always knows which
  * studies they chose themselves and which an agent proposed.
  */
-export function ShortlistPanel() {
+/**
+ * @param comparisonOpen Whether the full-width comparison view is showing.
+ * @param onCompare      Opens it. Owned by the app shell rather than this panel
+ *                       because the comparison needs the whole page width — a
+ *                       side-by-side table is unreadable in this narrow column.
+ */
+export function ShortlistPanel({
+  comparisonOpen,
+  onCompare,
+}: {
+  comparisonOpen: boolean;
+  onCompare: () => void;
+}) {
   const shortlist = useTrialStore((s) => s.shortlist);
   const removeFromShortlist = useTrialStore((s) => s.removeFromShortlist);
   const setOpenTrialId = useTrialStore((s) => s.setOpenTrialId);
-  const [showComparison, setShowComparison] = useState(false);
 
   const canCompare = shortlist.length >= 2;
 
@@ -31,12 +40,12 @@ export function ShortlistPanel() {
           </Badge>
           <Button
             type="button"
-            onClick={() => setShowComparison((v) => !v)}
-            disabled={!canCompare}
-            aria-expanded={showComparison}
-            aria-controls="comparison-region"
+            variant={canCompare ? "primary" : "secondary"}
+            onClick={onCompare}
+            disabled={!canCompare || comparisonOpen}
+            title={canCompare ? undefined : "Shortlist a second study to compare"}
           >
-            {showComparison ? "Hide comparison" : "Compare"}
+            Compare
           </Button>
         </div>
       }
@@ -89,12 +98,6 @@ export function ShortlistPanel() {
           ))}
         </ul>
       )}
-
-      {showComparison && canCompare ? (
-        <div id="comparison-region" className="mt-4">
-          <ComparisonView />
-        </div>
-      ) : null}
     </Panel>
   );
 }

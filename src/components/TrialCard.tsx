@@ -102,7 +102,7 @@ export function TrialCard({ trial }: { trial: Trial }) {
           <summary className="cursor-pointer text-[11px] font-medium text-tb-accent">
             Brief summary
           </summary>
-          <p className="mt-1 max-h-52 overflow-y-auto text-[11px] leading-relaxed whitespace-pre-line text-tb-muted">
+          <p className="mt-1 text-[11px] leading-relaxed whitespace-pre-line text-tb-muted">
             {trial.briefSummary}
           </p>
         </details>

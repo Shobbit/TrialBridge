@@ -8,6 +8,9 @@ import { useTrialStore } from "@/lib/store";
 import { Findings } from "./Findings";
 import { Badge, Button, StatusBadge, formatTimestamp, phaseLabel } from "./primitives";
 
+/** How many sites to show before asking. */
+const LOCATION_PREVIEW_COUNT = 5;
+
 /**
  * Full record for one study, including verbatim eligibility criteria.
  *
@@ -29,7 +32,22 @@ export function TrialDetailDrawer() {
   const [failure, setFailure] = useState<{ nctId: string; message: string } | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
+  // Keyed to the study rather than a plain boolean, so opening a different
+  // study collapses the list again without an effect that resets state.
+  const [locationsExpandedFor, setLocationsExpandedFor] = useState<string | null>(null);
+  const showAllLocations = locationsExpandedFor === openTrialId;
+
   const trial: Trial | null = openTrialId ? (detailCache[openTrialId] ?? null) : null;
+
+  // Nearest first, so the preview shows the sites that actually matter.
+  const sortedLocations = useMemo(
+    () =>
+      (trial?.locations ?? [])
+        .slice()
+        .sort((a, b) => (a.distanceMiles ?? 1e9) - (b.distanceMiles ?? 1e9)),
+    [trial],
+  );
+  const hiddenLocationCount = Math.max(0, sortedLocations.length - LOCATION_PREVIEW_COUNT);
   const error = failure && failure.nctId === openTrialId ? failure.message : null;
   // Derived rather than stored: if the record is neither cached nor failed,
   // a fetch for it is necessarily still in flight.
@@ -162,7 +180,10 @@ export function TrialDetailDrawer() {
                   Eligibility criteria (verbatim from ClinicalTrials.gov)
                 </h3>
                 {trial.eligibilityCriteria ? (
-                  <pre className="max-h-96 overflow-y-auto rounded-lg border border-tb-border bg-tb-surface-2 p-3 text-[11px] leading-relaxed whitespace-pre-wrap">
+                  // No max-height here: a scrollable box inside an already
+                  // scrollable dialog produces two scrollbars and makes long
+                  // criteria genuinely hard to read. The dialog itself scrolls.
+                  <pre className="rounded-lg border border-tb-border bg-tb-surface-2 p-3 text-[11px] leading-relaxed whitespace-pre-wrap">
                     {trial.eligibilityCriteria}
                   </pre>
                 ) : (
@@ -187,25 +208,51 @@ export function TrialDetailDrawer() {
                   Study locations ({trial.locations.length})
                 </h3>
                 {trial.locations.length ? (
-                  <ul className="max-h-64 space-y-1 overflow-y-auto">
-                    {trial.locations
-                      .slice()
-                      .sort((a, b) => (a.distanceMiles ?? 1e9) - (b.distanceMiles ?? 1e9))
-                      .map((l, i) => (
-                        <li
-                          key={`${l.facility ?? "site"}-${i}`}
-                          className="rounded border border-tb-border px-2 py-1 text-[11px]"
-                        >
-                          <span className="font-medium">{l.facility ?? "Unnamed site"}</span>
-                          <span className="text-tb-muted">
-                            {" — "}
-                            {[l.city, l.state, l.country].filter(Boolean).join(", ")}
-                            {l.distanceMiles !== null ? ` · ~${l.distanceMiles} mi` : ""}
-                            {l.status ? ` · ${l.status.toLowerCase().replace(/_/g, " ")}` : ""}
-                          </span>
-                        </li>
-                      ))}
-                  </ul>
+                  <>
+                    {/*
+                      Some studies publish nearly 200 sites. Rendering them all
+                      buried the actions below and needed its own scrollbar, so
+                      only the nearest few are shown until asked for.
+                    */}
+                    <ul className="space-y-1">
+                      {sortedLocations
+                        .slice(0, showAllLocations ? undefined : LOCATION_PREVIEW_COUNT)
+                        .map((l, i) => (
+                          <li
+                            key={`${l.facility ?? "site"}-${i}`}
+                            className="rounded border border-tb-border px-2 py-1 text-[11px]"
+                          >
+                            <span className="font-medium">{l.facility ?? "Unnamed site"}</span>
+                            <span className="text-tb-muted">
+                              {" — "}
+                              {[l.city, l.state, l.country].filter(Boolean).join(", ")}
+                              {l.distanceMiles !== null ? ` · ~${l.distanceMiles} mi` : ""}
+                              {l.status ? ` · ${l.status.toLowerCase().replace(/_/g, " ")}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                    </ul>
+                    {hiddenLocationCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLocationsExpandedFor(showAllLocations ? null : openTrialId)
+                        }
+                        aria-expanded={showAllLocations}
+                        className="mt-1.5 text-[11px] font-medium text-tb-accent underline underline-offset-2"
+                      >
+                        {showAllLocations
+                          ? "Show fewer locations"
+                          : `Show all ${trial.locations.length} locations`}
+                      </button>
+                    ) : null}
+                    {!showAllLocations && hiddenLocationCount > 0 ? (
+                      <p className="mt-1 text-[11px] text-tb-muted">
+                        Showing the {LOCATION_PREVIEW_COUNT} nearest of {trial.locations.length}{" "}
+                        published sites.
+                      </p>
+                    ) : null}
+                  </>
                 ) : (
                   <p className="text-[11px] text-tb-muted">No locations are published.</p>
                 )}

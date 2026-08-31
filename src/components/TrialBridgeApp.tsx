@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTrialStore } from "@/lib/store";
 import { AgentStatus } from "./AgentStatus";
+import { ComparisonView } from "./ComparisonView";
 import { PreScreeningPanel } from "./PreScreeningPanel";
 import { ProfileForm } from "./ProfileForm";
 import { QuestionsPanel } from "./QuestionsPanel";
 import { ResultsPanel } from "./ResultsPanel";
+import { ShortlistBar } from "./ShortlistBar";
 import { ShortlistPanel } from "./ShortlistPanel";
 import { TrialDetailDrawer } from "./TrialDetailDrawer";
 import { Button } from "./primitives";
@@ -53,10 +55,39 @@ function ClearDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm:
  */
 export function TrialBridgeApp() {
   const clearEverything = useTrialStore((s) => s.clearEverything);
+  const shortlistCount = useTrialStore((s) => s.shortlist.length);
   const [confirmClear, setConfirmClear] = useState(false);
 
+  // Comparison is view state, not application data, so it stays in React and
+  // is never persisted.
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const comparisonRef = useRef<HTMLElement>(null);
+  const shortlistRef = useRef<HTMLDivElement>(null);
+
+  // Derived rather than stored: if the shortlist drops below two studies the
+  // comparison simply stops rendering, instead of stranding the user on a view
+  // that no longer has anything to compare.
+  const showComparison = comparisonOpen && shortlistCount >= 2;
+
+  function openComparison() {
+    setComparisonOpen(true);
+    // Move focus as well as scroll: a keyboard user must land on the new view,
+    // not be left at the bottom of the page they came from.
+    requestAnimationFrame(() => {
+      comparisonRef.current?.focus();
+      comparisonRef.current?.scrollIntoView({ block: "start" });
+    });
+  }
+
+  function closeComparison() {
+    setComparisonOpen(false);
+    requestAnimationFrame(() => {
+      shortlistRef.current?.scrollIntoView({ block: "start" });
+    });
+  }
+
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:py-10">
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 pb-24 sm:px-6 lg:py-10 lg:pb-28">
       <header className="mb-5">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">TrialBridge</h1>
@@ -91,18 +122,46 @@ export function TrialBridgeApp() {
         <AgentStatus />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:items-start">
-        <div className="space-y-5 lg:sticky lg:top-6">
-          <ProfileForm onClearRequest={() => setConfirmClear(true)} />
-          <ShortlistPanel />
-          <QuestionsPanel />
+      {/*
+        The comparison is a full-width mode, not a panel inside the left column.
+        A side-by-side table of several studies cannot be read in a half-width
+        column: it forced horizontal scrolling inside an already narrow box.
+        Here it gets the whole content width, and the results grid is hidden
+        while it is open so there is one thing to read at a time.
+      */}
+      {showComparison ? (
+        <section ref={comparisonRef} aria-labelledby="comparison-heading" tabIndex={-1}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 id="comparison-heading" className="text-base font-semibold">
+              Comparing your shortlist
+            </h2>
+            <Button type="button" onClick={closeComparison}>
+              ← Back to results
+            </Button>
+          </div>
+          <ComparisonView />
+          <div className="mt-3">
+            <Button type="button" onClick={closeComparison}>
+              ← Back to results
+            </Button>
+          </div>
+        </section>
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:items-start">
+          <div className="space-y-5 lg:sticky lg:top-6">
+            <ProfileForm onClearRequest={() => setConfirmClear(true)} />
+            <div ref={shortlistRef}>
+              <ShortlistPanel comparisonOpen={showComparison} onCompare={openComparison} />
+            </div>
+            <QuestionsPanel />
+          </div>
+          <div className="space-y-5">
+            {/* Only rendered while a pre-screening session is open. */}
+            <PreScreeningPanel />
+            <ResultsPanel />
+          </div>
         </div>
-        <div className="space-y-5">
-          {/* Only rendered while a pre-screening session is open. */}
-          <PreScreeningPanel />
-          <ResultsPanel />
-        </div>
-      </div>
+      )}
 
       <footer className="mt-8 border-t border-tb-border pt-4 text-[11px] leading-relaxed text-tb-muted">
         <p>
@@ -169,6 +228,13 @@ export function TrialBridgeApp() {
           TrialBridge is in beta, use fictional information only.
         </p>
       </footer>
+
+      <ShortlistBar
+        comparisonOpen={showComparison}
+        onViewShortlist={() => shortlistRef.current?.scrollIntoView({ block: "start" })}
+        onCompare={openComparison}
+        onBackToResults={closeComparison}
+      />
 
       <TrialDetailDrawer />
 
