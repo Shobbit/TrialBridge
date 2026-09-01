@@ -1,4 +1,5 @@
 import { haversineMiles, isFiniteCoord, parseAgeToYears } from "../geo";
+import { extractStageRequirement } from "./stage";
 import {
   RECRUITMENT_STATUSES,
   SEX_ELIGIBILITY,
@@ -108,6 +109,8 @@ export function normalizeStudy(raw: unknown, origin?: NormalizeOrigin | null): T
     })
     .filter((i): i is TrialIntervention => i !== null);
 
+  const conditions = strArray(conditionsModule.conditions);
+
   const minimumAge = str(eligibility.minimumAge);
   const maximumAge = str(eligibility.maximumAge);
 
@@ -118,7 +121,7 @@ export function normalizeStudy(raw: unknown, origin?: NormalizeOrigin | null): T
     overallStatus:
       oneOf<RecruitmentStatus>(status.overallStatus, RECRUITMENT_STATUSES) ?? "UNKNOWN",
     statusVerifiedDate: str(status.statusVerifiedDate),
-    conditions: strArray(conditionsModule.conditions),
+    conditions,
     interventions,
     phases: strArray(design.phases)
       .map((p) => oneOf<TrialPhase>(p, TRIAL_PHASES))
@@ -147,5 +150,26 @@ export function normalizeStudy(raw: unknown, origin?: NormalizeOrigin | null): T
     completionDate: str(obj(status.completionDateStruct).date),
     sourceUrl: trialUrl(nctId),
     retrievedAt: new Date().toISOString(),
+    /*
+     * Read from the conditions list and the inclusion half of the criteria
+     * only. Exclusion text is left out deliberately: "patients with Stage IV
+     * are excluded" must not be read as the study accepting Stage IV.
+     */
+    stageRequirement: extractStageRequirement(
+      conditions,
+      inclusionOnly(str(eligibility.eligibilityCriteria)),
+    ),
   };
+}
+
+/**
+ * Returns the text before any "Exclusion Criteria" heading.
+ *
+ * A blunt split is right here: everything after that heading describes who is
+ * kept out, and reading a stage from it would invert the meaning.
+ */
+function inclusionOnly(criteria: string | null): string {
+  if (!criteria) return "";
+  const match = criteria.match(/^\s*(?:key\s+)?exclusion\s+criteria\s*:?\s*$/im);
+  return match?.index !== undefined ? criteria.slice(0, match.index) : criteria;
 }

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import type { Trial } from "@/lib/ctgov/types";
+import { stageLabel } from "@/lib/ctgov/stage";
 import { analyzeTrial } from "@/lib/match";
 import { useTrialStore } from "@/lib/store";
 import { Findings } from "./Findings";
@@ -23,6 +24,7 @@ export function TrialCard({ trial }: { trial: Trial }) {
 
   const analysis = useMemo(() => analyzeTrial(trial, profile), [trial, profile]);
   const isShortlisted = shortlist.some((e) => e.trial.nctId === trial.nctId);
+  const stageText = stageLabel(trial.stageRequirement);
 
   const nearest = trial.locations
     .filter((l) => l.distanceMiles !== null)
@@ -38,6 +40,19 @@ export function TrialCard({ trial }: { trial: Trial }) {
         {trial.nearestLocationMiles !== null ? (
           <Badge>~{trial.nearestLocationMiles} mi to nearest site</Badge>
         ) : null}
+        {/*
+          Stage is shown on the card because in oncology it is the first thing
+          a patient checks. Where the study never states one, that is said
+          plainly rather than left blank — a missing stage is information too.
+        */}
+        {stageText ? (
+          <Badge tone="accent">
+            {stageText}
+            {trial.stageRequirement.source === "metastatic" ? " (metastatic)" : ""}
+          </Badge>
+        ) : (
+          <Badge>Stage not stated</Badge>
+        )}
         {isShortlisted ? <Badge tone="agent">On shortlist</Badge> : null}
       </div>
 

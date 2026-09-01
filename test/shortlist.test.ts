@@ -70,6 +70,7 @@ describe("shortlist", () => {
       totalCount: 1,
       returnedCount: 1,
       removedOffTopic: 0,
+      removedByStage: 0,
       nextPageToken: null,
       retrievedAt: new Date().toISOString(),
       upstreamUrl: "https://clinicaltrials.gov/api/v2/studies",

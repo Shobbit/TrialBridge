@@ -4,6 +4,7 @@ import { UpstreamError, fetchUpstreamJson } from "@/lib/ctgov/fetch";
 import { normalizeStudy } from "@/lib/ctgov/normalize";
 import { buildSearchUrl } from "@/lib/ctgov/query";
 import { filterByCondition } from "@/lib/ctgov/relevance";
+import { stageMatches } from "@/lib/ctgov/stage";
 import { DEFAULT_SEARCH_STATUS, type SearchResponse, type Trial } from "@/lib/ctgov/types";
 import { geocodePlace } from "@/lib/geocode";
 import { searchInputSchema, type SearchInput } from "@/lib/schemas";
@@ -100,11 +101,33 @@ export async function POST(request: Request) {
      * rather than shown. The count is reported so the person can see it
      * happened instead of wondering why the totals disagree.
      */
-    const { kept: trials, removed: offTopic } = filterByCondition(normalized, input.condition);
+    const { kept: onTopic, removed: offTopic } = filterByCondition(normalized, input.condition);
 
     if (offTopic > 0) {
       warnings.push(
         `${offTopic} ${offTopic === 1 ? "study was" : "studies were"} returned by ClinicalTrials.gov but ${offTopic === 1 ? "does" : "do"} not list ${input.condition} among the conditions studied, so ${offTopic === 1 ? "it was" : "they were"} not shown.`,
+      );
+    }
+
+    /*
+     * Stage: "if available, match".
+     *
+     * A study that states a stage must agree with the stage entered. A study
+     * that states none is kept — roughly half of recruiting oncology trials
+     * never state one, and hiding those would remove more real options than it
+     * removed noise.
+     *
+     * "Metastatic" counts as Stage IV, which is how it is staged clinically.
+     */
+    const wantsStage = input.cancerStage && input.cancerStage !== "unspecified";
+    const trials = wantsStage
+      ? onTopic.filter((t) => stageMatches(t.stageRequirement, input.cancerStage))
+      : onTopic;
+    const removedByStage = onTopic.length - trials.length;
+
+    if (removedByStage > 0) {
+      warnings.push(
+        `${removedByStage} ${removedByStage === 1 ? "study states a stage that does" : "studies state stages that do"} not include stage ${input.cancerStage}, so ${removedByStage === 1 ? "it was" : "they were"} not shown. Studies that do not state a stage are still listed.`,
       );
     }
 
@@ -114,6 +137,7 @@ export async function POST(request: Request) {
         totalCount: typeof payload.totalCount === "number" ? payload.totalCount : null,
         returnedCount: trials.length,
         removedOffTopic: offTopic,
+        removedByStage,
         nextPageToken: typeof payload.nextPageToken === "string" ? payload.nextPageToken : null,
         retrievedAt: new Date().toISOString(),
         upstreamUrl,

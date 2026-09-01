@@ -1,3 +1,5 @@
+import type { StageRequirement } from "./stage";
+
 /**
  * Normalised, UI- and agent-facing shapes.
  *
@@ -117,6 +119,11 @@ export interface Trial {
   sourceUrl: string;
   /** ISO-8601 timestamp of the fetch that produced this object. */
   retrievedAt: string;
+  /**
+   * Stages this study appears to accept, read from its conditions and
+   * inclusion criteria. Empty when the study states none.
+   */
+  stageRequirement: StageRequirement;
 }
 
 export interface SearchMeta {
@@ -124,6 +131,8 @@ export interface SearchMeta {
   returnedCount: number;
   /** Studies dropped because they were not about the searched condition. */
   removedOffTopic: number;
+  /** Studies dropped because they state a stage that excludes the one entered. */
+  removedByStage: number;
   nextPageToken: string | null;
   retrievedAt: string;
   /** The exact upstream URL used, so results are auditable. */
