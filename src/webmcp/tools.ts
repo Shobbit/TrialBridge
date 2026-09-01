@@ -9,6 +9,7 @@ import {
   runSearch,
 } from "@/lib/actions";
 import { ELIGIBILITY_DISCLAIMER, analyzeTrial } from "@/lib/match";
+import { findCancer } from "@/lib/catalog/cancers";
 import { parseCriteria } from "@/lib/criteria";
 import {
   AGENT_COMPARISON_LABEL,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/safety";
 import {
   MAX_RESPONSES_PER_CALL,
+  OTHER_CANCER_ID,
   nctIdSchema,
   profileUpdateSchema,
   recordResponsesInputSchema,
@@ -167,7 +169,7 @@ export function createTools(): ToolDescriptor[] {
     {
       name: "get_search_profile",
       description:
-        "Read the trial-search preferences currently shown in the TrialBridge form: condition, age, sex, city/state/country, acceptable travel distance, recruitment statuses, preferred phases, prior treatments and keywords. Read-only; changes nothing. Call this first to learn what the person has already entered before deciding what to search or what to ask them. Fields the person left blank are returned as empty strings, empty arrays or null so you can see exactly what is missing.",
+        "Read the trial-search preferences currently shown in the TrialBridge form: the selected cancer type, cancer stage, age, sex, city/state/country, acceptable travel distance, preferred phases, prior treatments received and keywords. Read-only; changes nothing. Call this first to learn what the person has already entered before deciding what to search or what to ask them. Fields the person left blank are returned as empty strings, empty arrays or null so you can see exactly what is missing.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       outputSchema: {
         type: "object",
@@ -179,9 +181,13 @@ export function createTools(): ToolDescriptor[] {
             items: { type: "string" },
             description: "Names of fields that are empty and may be worth asking about.",
           },
+          selectedCancer: {
+            type: ["object", "null"],
+            description: "The chosen catalogue entry: its id, label and query term.",
+          },
           readyToSearch: {
             type: "boolean",
-            description: "True when at least a condition has been entered.",
+            description: "True once a cancer type has been selected.",
           },
         },
         required: ["ok", "profile", "missingFields", "readyToSearch"],
@@ -196,25 +202,39 @@ export function createTools(): ToolDescriptor[] {
       execute: guard("get_search_profile", async () => {
         const { profile, shortlist, results, questions } = useTrialStore.getState();
 
+        // A catalogue selection is what makes a search possible; the fallback
+        // additionally needs the person's own wording.
+        const selected =
+          profile.cancerId && profile.cancerId !== OTHER_CANCER_ID
+            ? findCancer(profile.cancerId)
+            : undefined;
+        const usingFallback = profile.cancerId === OTHER_CANCER_ID;
+        const readyToSearch = Boolean(selected) || (usingFallback && profile.condition.trim() !== "");
+        const cancerLabel = selected?.label ?? (usingFallback ? profile.condition : "");
+
         const missingFields: string[] = [];
-        if (!profile.condition) missingFields.push("condition");
+        if (!readyToSearch) missingFields.push("cancerId");
+        if (profile.cancerStage === "unspecified") missingFields.push("cancerStage");
         if (profile.age === null) missingFields.push("age");
         if (!profile.city && !profile.state) missingFields.push("city/state");
         if (profile.travelDistanceMiles === null) missingFields.push("travelDistanceMiles");
-        if (!profile.priorTreatments.length) missingFields.push("priorTreatments");
+        if (!profile.netTreatments.length) missingFields.push("netTreatments");
 
         return ok(
-          profile.condition
-            ? `Profile: condition "${profile.condition}"${profile.age !== null ? `, age ${profile.age}` : ""}${
+          readyToSearch
+            ? `Profile: cancer "${cancerLabel}"${profile.cancerStage !== "unspecified" ? `, stage ${profile.cancerStage}` : ""}${profile.age !== null ? `, age ${profile.age}` : ""}${
                 profile.city || profile.state
                   ? `, near ${[profile.city, profile.state].filter(Boolean).join(", ")}`
                   : ""
               }. Missing: ${missingFields.length ? missingFields.join(", ") : "nothing"}.`
-            : "The search form is empty. A condition or diagnosis is required before searching.",
+            : "No cancer type is selected yet. Set one with update_search_profile before searching.",
           {
             profile,
+            selectedCancer: selected
+              ? { id: selected.id, label: selected.label, query: selected.query }
+              : null,
             missingFields,
-            readyToSearch: Boolean(profile.condition),
+            readyToSearch,
             currentResultCount: results.length,
             shortlistCount: shortlist.length,
             questionCount: questions.length,

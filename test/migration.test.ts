@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PERSIST_VERSION, migratePersistedState } from "@/lib/store";
-import { profileSchema } from "@/lib/schemas";
+import {
+  PERSIST_VERSION,
+  matchSavedConditionToCatalogue,
+  migratePersistedState,
+} from "@/lib/store";
+import { OTHER_CANCER_ID, profileSchema } from "@/lib/schemas";
 
 /**
  * The v1 → v2 persistence migration.
@@ -224,5 +228,106 @@ describe("version handling", () => {
     expect(profileOf(migratePersistedState(v1State(["COMPLETED"]), 1))).toMatchObject({
       recruitmentStatuses: ["RECRUITING"],
     });
+  });
+});
+
+// --------------------------------------------------------------------------
+
+describe("v2 -> v3: the condition box became a cancer selector", () => {
+  it("maps a saved condition that clearly matches a catalogue entry", () => {
+    const migrated = migratePersistedState(
+      { profile: { condition: "Neuroendocrine and Adrenal Tumors" } },
+      2,
+    );
+    expect(profileOf(migrated).cancerId).toBe("neuroendocrine-and-adrenal-tumors");
+  });
+
+  it("matches on a curated alias, not just the label", () => {
+    for (const [condition, expected] of [
+      ["NSCLC", "non-small-cell-lung-cancer"],
+      ["SCLC", "small-cell-lung-cancer"],
+      ["AML", "acute-myeloid-leukemia"],
+      ["carcinoid", "neuroendocrine-and-adrenal-tumors"],
+    ] as const) {
+      const migrated = migratePersistedState({ profile: { condition } }, 2);
+      expect(profileOf(migrated).cancerId, condition).toBe(expected);
+    }
+  });
+
+  it("preserves an unrecognised condition under the fallback rather than guessing", () => {
+    const migrated = migratePersistedState(
+      { profile: { condition: "salivary gland carcinoma" } },
+      2,
+    );
+    const profile = profileOf(migrated);
+    expect(profile.cancerId).toBe(OTHER_CANCER_ID);
+    // The person's own words survive verbatim.
+    expect(profile.condition).toBe("salivary gland carcinoma");
+  });
+
+  it("never silently replaces a saved condition with a near-miss guess", () => {
+    // "lung cancer" is not a catalogue entry; guessing SCLC or NSCLC would
+    // change what the person is searching for.
+    const migrated = migratePersistedState({ profile: { condition: "lung cancer" } }, 2);
+    expect(profileOf(migrated).cancerId).toBe(OTHER_CANCER_ID);
+  });
+
+  it("leaves an empty condition with no cancer selected", () => {
+    const migrated = migratePersistedState({ profile: { condition: "" } }, 2);
+    expect(profileOf(migrated).cancerId).toBe("");
+  });
+
+  it("does not overwrite a cancerId that is already set", () => {
+    const migrated = migratePersistedState(
+      { profile: { condition: "anything", cancerId: "breast-cancer" } },
+      2,
+    );
+    expect(profileOf(migrated).cancerId).toBe("breast-cancer");
+  });
+
+  it("adds an empty treatment list without disturbing other fields", () => {
+    const migrated = migratePersistedState(
+      { profile: { condition: "Breast Cancer", age: 54, city: "Chicago" } },
+      2,
+    );
+    const profile = profileOf(migrated);
+    expect(profile.netTreatments).toEqual([]);
+    expect(profile.age).toBe(54);
+    expect(profile.city).toBe("Chicago");
+  });
+
+  it("produces a profile the current schema accepts", () => {
+    for (const condition of ["Breast Cancer", "salivary gland carcinoma", "", "NSCLC"]) {
+      const migrated = migratePersistedState({ profile: { condition } }, 2);
+      const parsed = profileSchema.safeParse(profileOf(migrated));
+      expect(parsed.success, condition).toBe(true);
+    }
+  });
+
+  it("preserves shortlist and questions through the upgrade", () => {
+    const migrated = migratePersistedState(
+      {
+        profile: { condition: "Breast Cancer" },
+        shortlist: [{ trial: { nctId: "NCT00000001" }, addedAt: "x", note: null, source: "human" }],
+        questions: [{ id: "q1", question: "An example question", nctId: null }],
+      },
+      2,
+    ) as Record<string, unknown>;
+
+    expect(migrated.shortlist).toHaveLength(1);
+    expect(migrated.questions).toHaveLength(1);
+  });
+});
+
+describe("matchSavedConditionToCatalogue", () => {
+  it("is case-insensitive and ignores surrounding space", () => {
+    expect(matchSavedConditionToCatalogue("  breast cancer  ")).toBe("breast-cancer");
+    expect(matchSavedConditionToCatalogue("BREAST CANCER")).toBe("breast-cancer");
+  });
+
+  it("returns null rather than a partial guess", () => {
+    for (const text of ["cancer", "lung", "leukemia", "", "   ", "zzz"]) {
+      expect(matchSavedConditionToCatalogue(text), text).toBeNull();
+    }
   });
 });

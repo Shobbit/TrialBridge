@@ -103,7 +103,7 @@ describe("registration on the top-level page", () => {
     expect(screen.getByText(/requires a browser or extension/i)).toBeInTheDocument();
 
     // The ordinary interface is still fully present and usable.
-    expect(screen.getByLabelText(/Medical condition or diagnosis/i)).toBeEnabled();
+    expect(screen.getByLabelText(/Type of cancer/i)).toBeEnabled();
     expect(screen.getByRole("button", { name: /Search trials/i })).toBeInTheDocument();
   });
 });
@@ -117,14 +117,14 @@ describe("agent writes are visible to the human", () => {
     await waitFor(() => expect(mcp.registry.size).toBe(10));
 
     await mcp.callTool("update_search_profile", {
-      condition: "example condition",
+      cancerId: "neuroendocrine-and-adrenal-tumors",
       age: 54,
       city: "Chicago",
     });
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/Medical condition or diagnosis/i)).toHaveValue(
-        "example condition",
+      expect(screen.getByLabelText(/Type of cancer/i)).toHaveValue(
+        "neuroendocrine-and-adrenal-tumors",
       );
     });
     expect(screen.getByLabelText(/Age in years/i)).toHaveValue(54);
@@ -137,10 +137,15 @@ describe("agent writes are visible to the human", () => {
     render(<TrialBridgeApp />);
     await waitFor(() => expect(mcp.registry.size).toBe(10));
 
-    await user.type(screen.getByLabelText(/Medical condition or diagnosis/i), "example condition");
+    await user.selectOptions(
+      screen.getByLabelText(/Type of cancer/i),
+      "neuroendocrine-and-adrenal-tumors",
+    );
 
     const data = structured(await mcp.callTool("get_search_profile"));
-    expect((data.profile as Record<string, unknown>).condition).toBe("example condition");
+    expect((data.profile as Record<string, unknown>).cancerId).toBe(
+      "neuroendocrine-and-adrenal-tumors",
+    );
     expect(data.readyToSearch).toBe(true);
   });
 
@@ -374,7 +379,9 @@ describe("clear my information", () => {
     await waitFor(() => expect(mcp.registry.size).toBe(10));
     useTrialStore.getState().cacheDetail(trialA);
 
-    await mcp.callTool("update_search_profile", { condition: "example condition" });
+    await mcp.callTool("update_search_profile", {
+      cancerId: "neuroendocrine-and-adrenal-tumors",
+    });
     await mcp.callTool("shortlist_trial", { nctId: "NCT00000001" });
     await mcp.callTool("save_screening_question", { question: "How often are study visits?" });
     await screen.findByText("NCT00000001");
@@ -384,7 +391,7 @@ describe("clear my information", () => {
     await user.click(within(dialog).getByRole("button", { name: /Clear everything/i }));
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/Medical condition or diagnosis/i)).toHaveValue("");
+      expect(screen.getByLabelText(/Type of cancer/i)).toHaveValue("");
     });
     expect(screen.getByText(/Nothing shortlisted yet/i)).toBeInTheDocument();
     expect(screen.getByText(/No questions yet/i)).toBeInTheDocument();

@@ -155,16 +155,27 @@ describe("get_search_profile", () => {
     const data = structured(await call("get_search_profile"));
     expect(data.ok).toBe(true);
     expect(data.readyToSearch).toBe(false);
-    expect(data.missingFields).toContain("condition");
+    expect(data.missingFields).toContain("cancerId");
   });
 
   it("returns exactly what the visible form holds", async () => {
-    useTrialStore.getState().setProfile({ condition: "example condition", age: 54, city: "Chicago" });
+    useTrialStore
+      .getState()
+      .setProfile({ cancerId: "neuroendocrine-and-adrenal-tumors", age: 54, city: "Chicago" });
     const data = structured(await call("get_search_profile"));
+
     expect(data.readyToSearch).toBe(true);
-    expect((data.profile as Record<string, unknown>).condition).toBe("example condition");
+    expect((data.profile as Record<string, unknown>).cancerId).toBe(
+      "neuroendocrine-and-adrenal-tumors",
+    );
     expect((data.profile as Record<string, unknown>).age).toBe(54);
-    expect(data.missingFields).not.toContain("condition");
+    expect(data.missingFields).not.toContain("cancerId");
+    // The resolved catalogue entry travels with the profile so the agent does
+    // not have to look it up.
+    expect(data.selectedCancer).toMatchObject({
+      id: "neuroendocrine-and-adrenal-tumors",
+      label: "Neuroendocrine Tumors (NET)",
+    });
   });
 });
 

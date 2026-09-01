@@ -3,7 +3,9 @@
 import { useId, useState } from "react";
 import { runSearch } from "@/lib/actions";
 import { TRIAL_PHASES } from "@/lib/ctgov/types";
+import { OTHER_CANCER_ID } from "@/lib/schemas";
 import { searchInputFromProfile, useTrialStore } from "@/lib/store";
+import { CancerSelect } from "./CancerSelect";
 import { Button, Panel, phaseLabel } from "./primitives";
 
 const FIELD =
@@ -24,7 +26,11 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
   const [treatmentDraft, setTreatmentDraft] = useState("");
   const ids = useId();
 
-  const canSearch = profile.condition.trim().length > 0 && searchState !== "loading";
+  // A catalogue selection is enough on its own; the fallback also needs text.
+  const hasCancer =
+    profile.cancerId !== "" &&
+    (profile.cancerId !== OTHER_CANCER_ID || profile.condition.trim().length > 0);
+  const canSearch = hasCancer && searchState !== "loading";
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -70,24 +76,13 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className={LABEL} htmlFor={`${ids}-condition`}>
-            Medical condition or diagnosis <span className="text-tb-mismatch">*</span>
-          </label>
-          <input
-            id={`${ids}-condition`}
-            className={FIELD}
-            value={profile.condition}
-            onChange={(e) => setProfile({ condition: e.target.value })}
-            placeholder="e.g. type 2 diabetes, metastatic melanoma"
-            required
-            aria-describedby={`${ids}-condition-help`}
-          />
-          <p id={`${ids}-condition-help`} className="mt-1 text-[11px] text-tb-muted">
-            Enter the condition as you would describe it. This is used only to query
-            ClinicalTrials.gov.
-          </p>
-        </div>
+        <CancerSelect
+          cancerId={profile.cancerId}
+          condition={profile.condition}
+          onChange={(next) => setProfile(next)}
+          fieldClassName={FIELD}
+          labelClassName={LABEL}
+        />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -344,8 +339,8 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
           <Button type="submit" variant="primary" disabled={!canSearch}>
             {searchState === "loading" ? "Searching ClinicalTrials.gov…" : "Search trials"}
           </Button>
-          {!profile.condition.trim() ? (
-            <span className="text-xs text-tb-muted">Enter a condition to search.</span>
+          {!hasCancer ? (
+            <span className="text-xs text-tb-muted">Choose your cancer type to search.</span>
           ) : null}
         </div>
       </form>

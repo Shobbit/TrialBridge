@@ -9,9 +9,11 @@ import {
   type SearchableRecruitmentStatus,
   type Trial,
 } from "./ctgov/types";
+import { CANCERS } from "./catalog/cancers";
 import type { Criterion } from "./criteria";
 import {
   EMPTY_PROFILE,
+  OTHER_CANCER_ID,
   profileSchema,
   type PreScreeningResponse,
   type ProfileUpdate,
@@ -104,7 +106,28 @@ interface TrialState {
 const STORAGE_KEY = "trialbridge:v1";
 
 /** Current shape version of the persisted state. */
-export const PERSIST_VERSION = 2;
+export const PERSIST_VERSION = 3;
+
+/**
+ * Maps a saved free-text condition onto a catalogue entry, if one clearly
+ * corresponds.
+ *
+ * Deliberately conservative: it accepts only an exact match on the entry's
+ * label, source label, query term or a curated alias. Anything else keeps its
+ * typed wording under the "Other cancer / not listed" fallback rather than
+ * being guessed at — a wrong guess would silently change what the person is
+ * searching for.
+ */
+export function matchSavedConditionToCatalogue(condition: string): string | null {
+  const needle = condition.trim().toLowerCase();
+  if (!needle) return null;
+
+  for (const entry of CANCERS) {
+    const candidates = [entry.label, entry.sourceLabel, entry.query, ...entry.aliases];
+    if (candidates.some((c) => c.toLowerCase() === needle)) return entry.id;
+  }
+  return null;
+}
 
 /**
  * Migrates state saved by an earlier build.
@@ -145,11 +168,28 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
     (SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).includes(s as string),
   );
 
+  /*
+   * v2 → v3: the free-text condition box became a cancer selector.
+   *
+   * A saved condition is mapped onto a catalogue entry only when it clearly
+   * corresponds. Anything else is preserved verbatim under the "Other cancer /
+   * not listed" fallback — the person's own words are never discarded, and
+   * never silently replaced by a guess.
+   */
+  const savedCondition = typeof profile.condition === "string" ? profile.condition : "";
+  const existingCancerId = typeof profile.cancerId === "string" ? profile.cancerId : "";
+  const cancerId =
+    existingCancerId ||
+    (savedCondition ? (matchSavedConditionToCatalogue(savedCondition) ?? OTHER_CANCER_ID) : "");
+
   return {
     ...state,
     profile: {
       ...profile,
       recruitmentStatuses: kept.length ? kept : [DEFAULT_SEARCH_STATUS],
+      cancerId,
+      condition: savedCondition,
+      netTreatments: Array.isArray(profile.netTreatments) ? profile.netTreatments : [],
     },
   };
 }
@@ -331,9 +371,21 @@ export const useTrialStore = create<TrialState>()(
  * Returns null when the mandatory condition field is empty.
  */
 export function searchInputFromProfile(profile: SearchProfile): SearchInput | null {
-  if (!profile.condition.trim()) return null;
+  /*
+   * A catalogue selection supplies its own wording, so `condition` need not be
+   * typed. The fallback still requires text, because there is nothing else to
+   * search on.
+   */
+  const selected =
+    profile.cancerId && profile.cancerId !== OTHER_CANCER_ID
+      ? CANCERS.find((c) => c.id === profile.cancerId)
+      : undefined;
+
+  const condition = selected ? selected.query : profile.condition.trim();
+  if (!condition) return null;
+
   return {
-    condition: profile.condition.trim(),
+    condition,
     city: profile.city || null,
     state: profile.state || null,
     country: profile.country || null,
@@ -342,6 +394,9 @@ export function searchInputFromProfile(profile: SearchProfile): SearchInput | nu
     phases: profile.phases,
     keywords: profile.keywords || null,
     cancerStage: profile.cancerStage,
+    // The fallback has no catalogue entry; `condition` carries the typed text.
+    cancerId: profile.cancerId && profile.cancerId !== OTHER_CANCER_ID ? profile.cancerId : null,
+    netTreatments: profile.netTreatments,
     pageSize: 20,
   };
 }

@@ -64,6 +64,13 @@ const profileFields = {
   priorTreatments: z.array(z.string().trim().max(120)).max(25),
   keywords: z.string().max(200),
   cancerStage: cancerStageSchema,
+  /**
+   * The selected cancer's catalogue id, or OTHER_CANCER_ID when the person
+   * chose the fallback and typed their own wording into `condition`.
+   */
+  cancerId: z.string().max(80),
+  /** Catalogue ids of NET treatments the person has received. */
+  netTreatments: z.array(z.string().max(80)).max(39),
 } as const;
 
 /**
@@ -86,7 +93,12 @@ export const profileSchema = z.object({
   priorTreatments: profileFields.priorTreatments.default([]),
   keywords: profileFields.keywords.default(""),
   cancerStage: profileFields.cancerStage.default("unspecified"),
+  cancerId: profileFields.cancerId.default(""),
+  netTreatments: profileFields.netTreatments.default([]),
 });
+
+/** Sentinel for "Other cancer / not listed", where `condition` is free text. */
+export const OTHER_CANCER_ID = "other-not-listed";
 
 export type SearchProfile = z.infer<typeof profileSchema>;
 
@@ -141,6 +153,8 @@ export const searchInputSchema = z.object({
   intervention: z.string().trim().max(120).nullish(),
   keywords: z.string().trim().max(200).nullish(),
   cancerStage: cancerStageSchema.nullish(),
+  /** Catalogue ids of prior treatments, used only for exclusion matching. */
+  netTreatments: z.array(z.string().trim().max(80)).max(39).optional(),
   pageSize: z.number().int().min(1).max(50).optional(),
   pageToken: z.string().trim().max(400).nullish(),
 });
