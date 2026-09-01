@@ -115,6 +115,15 @@ export const EMPTY_PROFILE: SearchProfile = profileSchema.parse({});
  * The most sensitive fields in the profile never leave the device.
  */
 export const searchInputSchema = z.object({
+  /**
+   * The selected cancer's catalogue id. When present it drives both the
+   * upstream query and local relevance matching, using that entry's curated
+   * aliases and conflicts.
+   *
+   * Absent only for the "Other cancer / not listed" fallback, where `condition`
+   * carries the typed text instead.
+   */
+  cancerId: z.string().trim().max(80).nullish(),
   condition: z.string().trim().min(1, "A condition or diagnosis is required").max(200),
   city: z.string().trim().max(100).nullish(),
   state: z.string().trim().max(100).nullish(),

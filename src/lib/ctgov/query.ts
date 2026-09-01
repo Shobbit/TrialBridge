@@ -23,6 +23,8 @@ export const SEARCH_FIELDS = [
 
 export interface BuildSearchUrlOptions {
   input: SearchInput;
+  /** Curated query term for the selected cancer, when one was chosen. */
+  cancerQuery?: string | null;
   /** Resolved coordinates for the geo filter; omitted when geocoding failed. */
   origin?: { lat: number; lon: number } | null;
 }
@@ -47,7 +49,7 @@ function escapeEssie(term: string): string {
  *  - Only "simple" CORS requests succeed: an `OPTIONS` preflight is rejected
  *    with 403, so no custom request headers may ever be added browser-side.
  */
-export function buildSearchUrl({ input, origin }: BuildSearchUrlOptions): string {
+export function buildSearchUrl({ input, origin, cancerQuery }: BuildSearchUrlOptions): string {
   const url = new URL(`${CTGOV_API_BASE}/studies`);
   const params = url.searchParams;
 
@@ -55,16 +57,20 @@ export function buildSearchUrl({ input, origin }: BuildSearchUrlOptions): string
   params.set("countTotal", "true");
   params.set("pageSize", String(input.pageSize ?? 20));
   params.set("fields", SEARCH_FIELDS);
-  params.set("query.cond", escapeEssie(input.condition));
+  // A selected cancer carries a curated query term; the free-text fallback
+  // uses whatever was typed.
+  params.set("query.cond", escapeEssie(cancerQuery ?? input.condition));
 
+  /*
+   * Stage is deliberately NOT sent upstream. ClinicalTrials.gov has no stage
+   * field, so adding it to query.term only biased the free-text search - it cut
+   * the candidate pool by about a third and removed studies that state no
+   * stage, before the local "keep unknown stage" rule could run. Stage is
+   * filtered locally instead.
+   */
   const terms: string[] = [];
   if (input.keywords) terms.push(escapeEssie(input.keywords));
   if (input.intervention) terms.push(escapeEssie(input.intervention));
-  // Stage has no structured field upstream, so it can only bias the free-text
-  // search. It is never treated as a hard filter.
-  if (input.cancerStage && input.cancerStage !== "unspecified") {
-    terms.push(escapeEssie(`stage `));
-  }
   if (terms.length) params.set("query.term", terms.join(" "));
 
   if (input.recruitmentStatuses?.length) {

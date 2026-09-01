@@ -1,23 +1,25 @@
+import type { CancerEntry } from "../catalog/cancers";
 import type { Trial } from "./types";
 
 /**
- * Condition relevance filtering.
+ * Disease relevance filtering.
  *
- * ClinicalTrials.gov matches `query.cond` loosely, so a search for
- * "type 2 diabetes" genuinely returns studies whose only listed condition is
- * "Healthy Participants" or "Type 1 Diabetes". Those are not near-misses; they
- * are the wrong disease, and showing them wastes the time of someone trying to
- * enrol.
+ * ClinicalTrials.gov matches `query.cond` loosely, so a search returns studies
+ * about neighbouring diseases. This module decides whether a study is **about
+ * the disease that was selected**. It is a relevance check on the registry's
+ * own condition list — not an eligibility judgement about a person — and it
+ * never reads the free-text criteria.
  *
- * This module decides only whether a study is **about the disease that was
- * asked for**. It is a relevance check on the registry's own condition list —
- * not an eligibility judgement about a person, and it never looks at the
- * free-text criteria.
+ * Two rules matter, and both were bugs in the previous version:
  *
- * Verified against live registry data, the matcher must cope with:
- *   "Type 2 Diabetes", "Type II Diabetes", "Diabetes Mellitus, Type 2",
- *   "Type 2 Diabetes Mellitus (T2DM)", "Diabetes Type 2"
- * while rejecting "Type 1 Diabetes" and "Healthy Participants".
+ *  1. **Each condition is evaluated on its own.** Concatenating a study's
+ *     conditions into one string let tokens from unrelated diseases combine to
+ *     satisfy a query no single condition satisfied.
+ *
+ *  2. **Conflicts are checked before matching.** "Non-small cell lung cancer"
+ *     contains every word of "small cell lung cancer", so token matching alone
+ *     accepts it. SCLC and NSCLC are different diseases with different
+ *     treatment, so a curated conflict list blocks that outright.
  */
 
 /** Words that carry no disease meaning on their own. */
@@ -28,9 +30,10 @@ const STOPWORDS = new Set([
 ]);
 
 /**
- * Severity/temporal qualifiers. If the person types one it is a preference,
- * not a requirement: registries routinely list plain "Melanoma" for a study of
- * metastatic melanoma, so demanding these would hide real matches.
+ * Severity and temporal qualifiers. If the person's selection carries one it is
+ * a preference, not a requirement: registries routinely list plain "Melanoma"
+ * for a study of metastatic melanoma, so demanding these would hide real
+ * matches.
  */
 const OPTIONAL_QUALIFIERS = new Set([
   "metastatic", "advanced", "recurrent", "refractory", "relapsed", "unresectable",
@@ -39,16 +42,17 @@ const OPTIONAL_QUALIFIERS = new Set([
 ]);
 
 /**
- * Discriminators that MUST match when present.
- *
- * This is the rule that keeps "Type 1 Diabetes" out of a "type 2 diabetes"
- * search. Roman numerals are folded to digits so "Type II Diabetes" matches.
+ * Qualifiers that are NOT optional, because they name a different disease
+ * rather than a different severity. "Chronic" and "acute" appear above as
+ * severity words for general conditions, but in leukaemia they are the whole
+ * distinction — so the catalogue's conflict list, not this set, is what keeps
+ * AML and CML apart.
  */
 const ROMAN_TO_ARABIC: Record<string, string> = {
   i: "1", ii: "2", iii: "3", iv: "4", v: "5",
 };
 
-/** Common shorthand people actually type, expanded to registry wording. */
+/** Common shorthand people type, expanded to registry wording. */
 const ABBREVIATIONS: Record<string, string> = {
   t1d: "type 1 diabetes",
   t1dm: "type 1 diabetes mellitus",
@@ -59,7 +63,13 @@ const ABBREVIATIONS: Record<string, string> = {
   crc: "colorectal cancer",
   tnbc: "triple negative breast cancer",
   aml: "acute myeloid leukemia",
+  cml: "chronic myeloid leukemia",
+  all: "acute lymphoblastic leukemia",
   cll: "chronic lymphocytic leukemia",
+  sll: "small lymphocytic lymphoma",
+  net: "neuroendocrine tumor",
+  gepnet: "gastroenteropancreatic neuroendocrine tumor",
+  pnet: "pancreatic neuroendocrine tumor",
   copd: "chronic obstructive pulmonary disease",
   ckd: "chronic kidney disease",
   ra: "rheumatoid arthritis",
@@ -71,13 +81,14 @@ const ABBREVIATIONS: Record<string, string> = {
 /**
  * Splits text into comparable tokens.
  *
- * British/American spelling and simple plurals are folded so that "tumour" and
- * "tumors" compare equal.
+ * Hyphens become spaces so "non-small" yields "non" and "small" — which is what
+ * lets the conflict check see the negating prefix rather than losing it.
+ * British/American spelling and simple plurals are folded.
  */
 function tokenize(text: string): string[] {
   const expanded = text
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
     .split(/\s+/)
     .flatMap((word) => (ABBREVIATIONS[word] ? ABBREVIATIONS[word].split(" ") : [word]));
 
@@ -90,63 +101,148 @@ function tokenize(text: string): string[] {
 
 const isNumeric = (token: string) => /^\d+$/.test(token);
 
+/** Normalised form used for whole-phrase comparison. */
+const normalisePhrase = (text: string) => tokenize(text).join(" ");
+
+export type MatchReason =
+  | "no-condition-selected"
+  | "no-conditions-published"
+  | "different-disease"
+  | "conflicting-subtype"
+  | null;
+
 export interface ConditionMatch {
   matched: boolean;
-  /** Why it was rejected, for the warning shown to the person. */
-  reason: "no-condition-entered" | "no-conditions-published" | "different-disease" | null;
+  reason: MatchReason;
+  /** The study condition that satisfied the match, for explanation. */
+  matchedOn: string | null;
 }
 
 /**
- * Decides whether a study is about the condition that was searched for.
- *
- * The rule: every meaningful token of the query must appear somewhere in the
- * study's published condition list, except severity qualifiers, which are
- * treated as optional. Numeric discriminators ("type 2") are never optional.
- *
- * Deliberately permissive in one direction and strict in the other: extra
- * conditions on the study are fine (a diabetes-and-obesity study still matches
- * "diabetes"), but a missing discriminator is fatal.
+ * Terms that should satisfy a selection: its query wording plus curated
+ * aliases. The display label is deliberately excluded — "Melanoma: Cutaneous"
+ * is a UI label, not registry wording.
  */
-export function matchesCondition(trial: Trial, condition: string): ConditionMatch {
-  const query = condition.trim();
-  if (!query) return { matched: true, reason: "no-condition-entered" };
+function acceptedTerms(cancer: CancerEntry): string[] {
+  return [cancer.query, ...cancer.aliases];
+}
 
-  // A study with no published condition list cannot be checked. Keep it and
-  // let the person judge, rather than hiding it on missing metadata.
-  if (!trial.conditions.length) return { matched: true, reason: "no-conditions-published" };
+/**
+ * Does one published condition string satisfy one accepted term?
+ *
+ * Every meaningful token of the term must appear in that single condition.
+ * Severity qualifiers in the term are optional; numeric discriminators are not.
+ */
+function conditionSatisfies(condition: string, term: string): boolean {
+  const termTokens = tokenize(term);
+  if (!termTokens.length) return false;
 
-  const queryTokens = tokenize(query);
-  if (!queryTokens.length) return { matched: true, reason: "no-condition-entered" };
+  const conditionTokens = new Set(tokenize(condition));
 
-  const trialTokens = new Set(tokenize(trial.conditions.join(" ")));
+  const required = termTokens.filter((t) => !OPTIONAL_QUALIFIERS.has(t));
+  const mustMatch = required.length ? required : termTokens;
 
-  const required = queryTokens.filter((t) => !OPTIONAL_QUALIFIERS.has(t));
-  // If the query is only qualifiers ("advanced"), fall back to all tokens
-  // rather than matching everything.
-  const mustMatch = required.length ? required : queryTokens;
+  if (!mustMatch.every((t) => conditionTokens.has(t))) return false;
 
-  const allPresent = mustMatch.every((t) => trialTokens.has(t));
-  if (!allPresent) return { matched: false, reason: "different-disease" };
+  // "type 2" must never be satisfied by a condition saying only "type 1".
+  for (const num of termTokens.filter(isNumeric)) {
+    if (!conditionTokens.has(num)) return false;
+  }
+  return true;
+}
 
-  // A numeric discriminator in the query must not be contradicted. "type 2"
-  // must never match a study whose conditions say only "type 1".
-  for (const num of queryTokens.filter(isNumeric)) {
-    if (!trialTokens.has(num)) return { matched: false, reason: "different-disease" };
+/**
+ * Does one published condition name a subtype the selection explicitly excludes?
+ *
+ * Checked before matching, because a conflicting phrase usually *contains* the
+ * selection's own words.
+ */
+function conditionConflicts(condition: string, cancer: CancerEntry): boolean {
+  const normalised = normalisePhrase(condition);
+  return cancer.conflicts.some((conflict) => {
+    const conflictTokens = tokenize(conflict);
+    if (!conflictTokens.length) return false;
+    // Whole-phrase containment: "non small cell lung cancer" inside the
+    // condition means this condition is the excluded subtype.
+    return normalised.includes(conflictTokens.join(" "));
+  });
+}
+
+/**
+ * Decides whether a study is about the selected cancer.
+ *
+ * A study qualifies when **at least one** of its published conditions both
+ * satisfies an accepted term and is not itself a conflicting subtype. A study
+ * listing several diseases therefore qualifies on the strength of the one that
+ * matches — which is correct for basket trials — while a study listing only the
+ * conflicting subtype is rejected.
+ */
+export function matchesCancer(trial: Trial, cancer: CancerEntry | null): ConditionMatch {
+  if (!cancer) return { matched: true, reason: "no-condition-selected", matchedOn: null };
+
+  // A study with no published condition list cannot be checked. Keep it and let
+  // the person judge, rather than hiding it on missing metadata.
+  if (!trial.conditions.length) {
+    return { matched: true, reason: "no-conditions-published", matchedOn: null };
   }
 
-  return { matched: true, reason: null };
+  const terms = acceptedTerms(cancer);
+  let sawConflict = false;
+
+  for (const condition of trial.conditions) {
+    if (conditionConflicts(condition, cancer)) {
+      sawConflict = true;
+      continue; // this condition is the wrong subtype; another may still match
+    }
+    for (const term of terms) {
+      if (conditionSatisfies(condition, term)) {
+        return { matched: true, reason: null, matchedOn: condition };
+      }
+    }
+  }
+
+  return {
+    matched: false,
+    reason: sawConflict ? "conflicting-subtype" : "different-disease",
+    matchedOn: null,
+  };
 }
 
 /**
- * Removes studies that are not about the searched condition.
+ * Free-text fallback, used only by "Other cancer / not listed".
+ *
+ * Same per-condition rule, with the typed text as the single accepted term and
+ * no curated conflicts available.
+ */
+export function matchesFreeText(trial: Trial, text: string): ConditionMatch {
+  const query = text.trim();
+  if (!query) return { matched: true, reason: "no-condition-selected", matchedOn: null };
+  if (!trial.conditions.length) {
+    return { matched: true, reason: "no-conditions-published", matchedOn: null };
+  }
+
+  for (const condition of trial.conditions) {
+    if (conditionSatisfies(condition, query)) {
+      return { matched: true, reason: null, matchedOn: condition };
+    }
+  }
+  return { matched: false, reason: "different-disease", matchedOn: null };
+}
+
+/**
+ * Removes studies that are not about the selected cancer.
  *
  * @returns the kept studies and how many were dropped, so the interface can say
  *          so plainly instead of silently shrinking the result count.
  */
-export function filterByCondition(
+export function filterByCancer(
   trials: Trial[],
-  condition: string,
+  cancer: CancerEntry | null,
+  freeText?: string | null,
 ): { kept: Trial[]; removed: number } {
-  const kept = trials.filter((t) => matchesCondition(t, condition).matched);
+  const test = (t: Trial) =>
+    cancer ? matchesCancer(t, cancer).matched : matchesFreeText(t, freeText ?? "").matched;
+
+  const kept = trials.filter(test);
   return { kept, removed: trials.length - kept.length };
 }

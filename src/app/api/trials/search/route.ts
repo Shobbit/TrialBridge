@@ -3,7 +3,8 @@ import { z } from "zod";
 import { UpstreamError, fetchUpstreamJson } from "@/lib/ctgov/fetch";
 import { normalizeStudy } from "@/lib/ctgov/normalize";
 import { buildSearchUrl } from "@/lib/ctgov/query";
-import { filterByCondition } from "@/lib/ctgov/relevance";
+import { findCancer } from "@/lib/catalog/cancers";
+import { filterByCancer } from "@/lib/ctgov/relevance";
 import { stageMatches } from "@/lib/ctgov/stage";
 import { DEFAULT_SEARCH_STATUS, type SearchResponse, type Trial } from "@/lib/ctgov/types";
 import { geocodePlace } from "@/lib/geocode";
@@ -55,6 +56,19 @@ export async function POST(request: Request) {
       ? parsed.data.recruitmentStatuses
       : [DEFAULT_SEARCH_STATUS],
   };
+  /*
+   * Resolve the selected cancer once. Its curated query drives the upstream
+   * request and its aliases/conflicts drive local matching, so both stay
+   * consistent with what the person actually chose.
+   */
+  const selectedCancer = input.cancerId ? (findCancer(input.cancerId) ?? null) : null;
+  if (input.cancerId && !selectedCancer) {
+    return NextResponse.json(
+      { error: `Unknown cancer selection: ${input.cancerId}` },
+      { status: 400 },
+    );
+  }
+
   const warnings: string[] = [];
 
   // Resolve the place name so we can both filter and measure distance.
@@ -79,7 +93,7 @@ export async function POST(request: Request) {
     warnings.push("No city or state was provided, so the travel-distance limit was not applied.");
   }
 
-  const upstreamUrl = buildSearchUrl({ input, origin });
+  const upstreamUrl = buildSearchUrl({ input, origin, cancerQuery: selectedCancer?.query ?? null });
 
   try {
     const raw = await fetchUpstreamJson(upstreamUrl);
@@ -101,23 +115,31 @@ export async function POST(request: Request) {
      * rather than shown. The count is reported so the person can see it
      * happened instead of wondering why the totals disagree.
      */
-    const { kept: onTopic, removed: offTopic } = filterByCondition(normalized, input.condition);
+    const { kept: onTopic, removed: offTopic } = filterByCancer(
+      normalized,
+      selectedCancer,
+      input.condition,
+    );
 
     if (offTopic > 0) {
+      const subject = selectedCancer?.label ?? input.condition;
       warnings.push(
-        `${offTopic} ${offTopic === 1 ? "study was" : "studies were"} returned by ClinicalTrials.gov but ${offTopic === 1 ? "does" : "do"} not list ${input.condition} among the conditions studied, so ${offTopic === 1 ? "it was" : "they were"} not shown.`,
+        `${offTopic} ${offTopic === 1 ? "study was" : "studies were"} returned by ClinicalTrials.gov but ${offTopic === 1 ? "does" : "do"} not list ${subject} among the conditions studied, so ${offTopic === 1 ? "it was" : "they were"} not shown.`,
       );
     }
 
     /*
      * Stage: "if available, match".
      *
-     * A study that states a stage must agree with the stage entered. A study
-     * that states none is kept — roughly half of recruiting oncology trials
-     * never state one, and hiding those would remove more real options than it
-     * removed noise.
+     * A study that states a stage clearly must agree with the stage entered.
+     * Anything uncertain is kept: no stage at all, or metastatic disease
+     * mentioned without a stage. Roughly half of recruiting oncology trials
+     * state no stage, so filtering them out would remove far more real options
+     * than noise.
      *
-     * "Metastatic" counts as Stage IV, which is how it is staged clinically.
+     * "Metastatic" is deliberately NOT treated as a definite Stage IV. It is
+     * Stage IV in many cancers but not all — melanoma Stage III already
+     * includes regional metastases, and AML has no I–IV staging at all.
      */
     const wantsStage = input.cancerStage && input.cancerStage !== "unspecified";
     const trials = wantsStage

@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { Trial } from "@/lib/ctgov/types";
-import { stageLabel } from "@/lib/ctgov/stage";
+import { hasDefiniteStage, stageLabel } from "@/lib/ctgov/stage";
 import { analyzeTrial } from "@/lib/match";
 import { useTrialStore } from "@/lib/store";
 import { Findings } from "./Findings";
@@ -42,17 +42,13 @@ export function TrialCard({ trial }: { trial: Trial }) {
         ) : null}
         {/*
           Stage is shown on the card because in oncology it is the first thing
-          a patient checks. Where the study never states one, that is said
-          plainly rather than left blank — a missing stage is information too.
+          a patient checks. Uncertainty is never rendered as a definite stage:
+          only a clear published statement gets the accent badge, and anything
+          else says plainly that the stage is not clear.
         */}
-        {stageText ? (
-          <Badge tone="accent">
-            {stageText}
-            {trial.stageRequirement.source === "metastatic" ? " (metastatic)" : ""}
-          </Badge>
-        ) : (
-          <Badge>Stage not stated</Badge>
-        )}
+        <Badge tone={hasDefiniteStage(trial.stageRequirement) ? "accent" : "neutral"}>
+          {stageText}
+        </Badge>
         {isShortlisted ? <Badge tone="agent">On shortlist</Badge> : null}
       </div>
 
