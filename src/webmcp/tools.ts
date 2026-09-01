@@ -10,6 +10,9 @@ import {
 } from "@/lib/actions";
 import { ELIGIBILITY_DISCLAIMER, analyzeTrial } from "@/lib/match";
 import { NET_CANCER_ID, findCancer } from "@/lib/catalog/cancers";
+import { resolveCancer, resolveTreatment } from "@/lib/catalog/lookup";
+import { findTreatment } from "@/lib/catalog/net-treatments";
+import { assessPriorTreatments } from "@/lib/ctgov/prior-treatment";
 import { parseCriteria } from "@/lib/criteria";
 import {
   AGENT_COMPARISON_LABEL,
@@ -140,6 +143,58 @@ function trialSummary(trial: Trial) {
   };
 }
 
+/**
+ * Why a study was shown, flagged, or withheld.
+ *
+ * The agent needs to be able to explain the list rather than restate it, so
+ * every judgement carries its evidence: which treatment matched, what it
+ * matched on, and the criterion in the registry's own words.
+ *
+ * `status: "not-screened"` is deliberately distinct from `"clear"`. The first
+ * means no treatments were entered or the criteria could not be read; the
+ * second means they were read and nothing matched. Collapsing the two would let
+ * an agent report "no exclusions found" about a study nobody checked.
+ */
+function priorTreatmentReport(trial: Trial) {
+  // Search results arrive already assessed. A record fetched on its own does
+  // not, so it is assessed here against the same profile the page is using.
+  const profile = useTrialStore.getState().profile;
+  const assessment =
+    trial.priorTreatment ??
+    assessPriorTreatments(
+      trial,
+      profile.cancerId === NET_CANCER_ID ? profile.netTreatments : [],
+    );
+
+  if (!assessment || assessment.notAssessed) {
+    return {
+      status: "not-screened" as const,
+      withheld: false,
+      matches: [],
+      note: assessment?.notAssessed
+        ? "This study's eligibility text could not be separated into inclusion and exclusion criteria, so it was not screened. That is not evidence of anything — read the criteria directly."
+        : "No prior treatments were entered, so no screening was performed.",
+    };
+  }
+
+  return {
+    status: assessment.status,
+    withheld: assessment.hideRecommended,
+    matches: assessment.matches.map((m) => ({
+      treatment: m.treatmentLabel,
+      matchedOn: m.matchedText,
+      matchedVia: m.matchedVia,
+      finding: m.finding,
+      criterionId: m.criterionId,
+      criterion: m.excerpt,
+    })),
+    note:
+      assessment.status === "clear"
+        ? "The published exclusion criteria were read and none named a treatment that was entered."
+        : "TrialBridge compared two pieces of text. Whether the criterion applies to this person is for the study team to confirm — never state that they are ineligible.",
+  };
+}
+
 function analysisFor(trial: Trial) {
   const analysis = analyzeTrial(trial, useTrialStore.getState().profile);
   return {
@@ -185,6 +240,22 @@ export function createTools(): ToolDescriptor[] {
             type: ["object", "null"],
             description: "The chosen catalogue entry: its id, label and query term.",
           },
+          selectedTreatments: {
+            type: "array",
+            items: { type: "object" },
+            description:
+              "Treatments already received, resolved from catalogue ids to names and brands.",
+          },
+          treatmentCatalogueApplies: {
+            type: "boolean",
+            description:
+              "True only when the selected cancer is the neuroendocrine entry, which is the one the supplied treatment catalogue covers. Do not set netTreatments when this is false.",
+          },
+          withheldResultCount: {
+            type: "integer",
+            description:
+              "Studies currently withheld from the visible list by the prior-treatment screen.",
+          },
           readyToSearch: {
             type: "boolean",
             description: "True once a cancer type has been selected.",
@@ -200,7 +271,8 @@ export function createTools(): ToolDescriptor[] {
         openWorldHint: false,
       },
       execute: guard("get_search_profile", async () => {
-        const { profile, shortlist, results, questions } = useTrialStore.getState();
+        const { profile, shortlist, results, hiddenResults, questions, showHiddenResults } =
+          useTrialStore.getState();
 
         // A catalogue selection is what makes a search possible; the fallback
         // additionally needs the person's own wording.
@@ -237,9 +309,27 @@ export function createTools(): ToolDescriptor[] {
             selectedCancer: selected
               ? { id: selected.id, label: selected.label, query: selected.query }
               : null,
+            // Resolved to display names, so the agent can talk about the drugs
+            // rather than about slugs, and can see when a stored id no longer
+            // exists in the catalogue.
+            selectedTreatments: profile.netTreatments.map((id) => {
+              const treatment = findTreatment(id);
+              return treatment
+                ? {
+                    id: treatment.id,
+                    name: treatment.name,
+                    brands: treatment.brands,
+                    category: treatment.category,
+                  }
+                : { id, name: null, brands: [], category: null };
+            }),
+            treatmentCatalogueApplies: profile.cancerId === NET_CANCER_ID,
+            cancerStage: profile.cancerStage,
             missingFields,
             readyToSearch,
             currentResultCount: results.length,
+            withheldResultCount: hiddenResults.length,
+            withheldResultsVisibleToPerson: showHiddenResults,
             shortlistCount: shortlist.length,
             questionCount: questions.length,
             note: "These values were self-entered by the person using the page. They are stored only in this browser.",
@@ -256,10 +346,29 @@ export function createTools(): ToolDescriptor[] {
       inputSchema: {
         type: "object",
         properties: {
+          cancerId: {
+            type: "string",
+            maxLength: 80,
+            description:
+              "The person's cancer type. Accepts this app's catalogue id, the display label, or any recognised alternative wording — \"AML\", \"acute myeloid leukemia\" and \"acute-myeloid-leukemia\" all resolve to the same entry. Matching is exact, never approximate: an unrecognised value is rejected with the reason rather than guessed at, because searching the wrong disease is worse than searching nothing. Use \"other-not-listed\" when the person's cancer is not in the catalogue, and put their own wording in 'condition'.",
+          },
+          cancerStage: {
+            type: "string",
+            enum: ["unspecified", "0", "I", "II", "III", "IV"],
+            description:
+              "Cancer stage as the person was told it. Used to hide studies whose published criteria state a stage that excludes it; studies stating no stage are always kept. Leave 'unspecified' unless the person actually stated a stage — never infer one.",
+          },
+          netTreatments: {
+            type: "array",
+            maxItems: 39,
+            items: { type: "string", maxLength: 80 },
+            description:
+              "Treatments the person has already received, from the neuroendocrine tumor catalogue. Accepts catalogue ids, generic names or brand names (\"everolimus\", \"Afinitor\"). Only meaningful when cancerId is the neuroendocrine entry. Used to flag or withhold studies whose exclusion criteria name one of them; never to state that anyone is ineligible.",
+          },
           condition: {
             type: "string",
             maxLength: 200,
-            description: "Medical condition or diagnosis to search for, as the person described it.",
+            description: "The person's own wording for their cancer. Used only when cancerId is \"other-not-listed\"; otherwise the catalogue entry supplies the search term.",
           },
           age: {
             type: ["integer", "null"],
@@ -332,7 +441,51 @@ export function createTools(): ToolDescriptor[] {
         const parsed = profileUpdateSchema.safeParse(input);
         if (!parsed.success) return invalidInput(parsed.error);
 
-        const updatedFields = Object.keys(parsed.data);
+        const update = { ...parsed.data };
+
+        /*
+         * Resolve names to catalogue entries.
+         *
+         * An unrecognised value is refused, never stored. Writing "lung
+         * cancer" into `cancerId` verbatim would leave the form holding a
+         * selection the human interface cannot display and the search cannot
+         * use, and the agent would have no idea.
+         */
+        if (update.cancerId !== undefined && update.cancerId !== "") {
+          if (update.cancerId === OTHER_CANCER_ID) {
+            // The fallback is a real choice, not a catalogue entry.
+          } else {
+            const entry = resolveCancer(update.cancerId);
+            if (!entry) {
+              return fail(
+                `"${update.cancerId}" does not match any cancer in the TrialBridge catalogue, so nothing was changed.`,
+                "UNKNOWN_CANCER",
+                'Ask the person for the exact name they were given, or set cancerId to "other-not-listed" and put their own wording in condition. TrialBridge will not guess which cancer was meant.',
+              );
+            }
+            update.cancerId = entry.id;
+          }
+        }
+
+        if (update.netTreatments !== undefined) {
+          const unresolved: string[] = [];
+          const resolved = update.netTreatments.map((value) => {
+            const entry = resolveTreatment(value);
+            if (!entry) unresolved.push(value);
+            return entry?.id ?? value;
+          });
+          if (unresolved.length) {
+            return fail(
+              `${unresolved.map((u) => `"${u}"`).join(", ")} ${unresolved.length === 1 ? "does" : "do"} not match any treatment in the TrialBridge catalogue, so nothing was changed.`,
+              "UNKNOWN_TREATMENT",
+              "The catalogue covers neuroendocrine tumor treatments only. Use a generic or brand name from it, or leave the treatment out — a treatment recorded under the wrong name would flag the wrong studies.",
+            );
+          }
+          // Deduplicate: two names for one drug are one treatment.
+          update.netTreatments = [...new Set(resolved)];
+        }
+
+        const updatedFields = Object.keys(update);
         if (!updatedFields.length) {
           return fail(
             "No fields were supplied, so nothing was changed.",
@@ -343,7 +496,7 @@ export function createTools(): ToolDescriptor[] {
 
         const store = useTrialStore.getState();
         const before = store.profile;
-        const profile = store.setProfile(parsed.data);
+        const profile = store.setProfile(update);
         store.noteAgentAction(`Updated search form: ${updatedFields.join(", ")}`);
 
         return ok(
@@ -415,6 +568,30 @@ export function createTools(): ToolDescriptor[] {
             maximum: 50,
             description: "Number of studies to return. Defaults to 20.",
           },
+          cancerId: {
+            type: "string",
+            maxLength: 80,
+            description:
+              "Catalogue id, label or alias for the cancer to search. Defaults to the form's selection. Drives both the query sent to ClinicalTrials.gov and the local check that each result really is about this disease.",
+          },
+          cancerStage: {
+            type: "string",
+            enum: ["unspecified", "0", "I", "II", "III", "IV"],
+            description:
+              "Defaults to the form value. Studies whose published criteria state a stage that excludes this one are removed; studies stating no stage are always kept, because roughly half of recruiting oncology trials state none.",
+          },
+          netTreatments: {
+            type: "array",
+            maxItems: 39,
+            items: { type: "string", maxLength: 80 },
+            description:
+              "Catalogue ids, generic names or brand names of treatments already received. Defaults to the form value. Studies whose exclusion criteria name one of them unconditionally are withheld from the main list and returned separately in 'withheldTrials'.",
+          },
+          showPossiblyExcluded: {
+            type: "boolean",
+            description:
+              "When true, the withheld studies are also revealed on the page, as if the person had chosen 'Show possibly excluded trials'. They are returned to you in 'withheldTrials' either way — this argument only controls what the person sees.",
+          },
           applyToForm: {
             type: "boolean",
             description:
@@ -427,11 +604,37 @@ export function createTools(): ToolDescriptor[] {
         type: "object",
         properties: {
           ok: { type: "boolean" },
-          totalCount: { type: ["integer", "null"] },
-          returnedCount: { type: "integer" },
+          totalCount: {
+            type: ["integer", "null"],
+            description:
+              "What ClinicalTrials.gov reported for the query. NOT the number of relevant studies — most of it was never read.",
+          },
+          returnedCount: { type: "integer", description: "Relevant studies now shown on the page." },
+          recordsChecked: {
+            type: "integer",
+            description: "Registry records actually read and filtered to produce that list.",
+          },
+          pagesFetched: { type: "integer" },
+          stopReason: {
+            type: "string",
+            enum: ["target-reached", "no-more-pages", "page-limit", "record-limit"],
+            description:
+              "Only 'no-more-pages' means the result set was exhausted. 'page-limit' and 'record-limit' mean the search stopped at its own bound and more studies may match — say so rather than implying the list is complete.",
+          },
+          filtering: {
+            type: "object",
+            description:
+              "What was removed and why: removedOffTopic, removedByStage, withheldByPriorTreatment.",
+          },
           retrievedAt: { type: "string" },
           source: { type: "string" },
           trials: { type: "array", items: { type: "object" } },
+          withheldTrials: {
+            type: "array",
+            items: { type: "object" },
+            description:
+              "Studies withheld from the main list because an exclusion criterion names a treatment the person entered. Each carries the criterion verbatim. They are candidates the person can still read, not decisions.",
+          },
           warnings: { type: "array", items: { type: "string" } },
           disclaimer: { type: "string" },
         },
@@ -446,14 +649,47 @@ export function createTools(): ToolDescriptor[] {
         openWorldHint: true,
       },
       execute: guard("search_clinical_trials", async (input) => {
-        const argSchema = searchInputSchema
-          .partial({ condition: true })
-          .extend({ applyToForm: z.boolean().optional() });
+        const argSchema = searchInputSchema.partial({ condition: true }).extend({
+          applyToForm: z.boolean().optional(),
+          showPossiblyExcluded: z.boolean().optional(),
+        });
         const parsed = argSchema.safeParse(input);
         if (!parsed.success) return invalidInput(parsed.error);
 
-        const { applyToForm = true, ...args } = parsed.data;
+        const { applyToForm = true, showPossiblyExcluded = false, ...args } = parsed.data;
         const store = useTrialStore.getState();
+
+        // Names to catalogue entries, on the same terms as update_search_profile:
+        // refused rather than guessed, because a wrong resolution here searches
+        // the wrong disease or flags the wrong studies.
+        if (args.cancerId != null && args.cancerId !== "" && args.cancerId !== OTHER_CANCER_ID) {
+          const entry = resolveCancer(args.cancerId);
+          if (!entry) {
+            return fail(
+              `"${args.cancerId}" does not match any cancer in the TrialBridge catalogue, so no search was run.`,
+              "UNKNOWN_CANCER",
+              "Call get_search_profile to see the current selection, or ask the person for the exact name they were given.",
+            );
+          }
+          args.cancerId = entry.id;
+        }
+
+        if (args.netTreatments?.length) {
+          const unresolved: string[] = [];
+          const resolved = args.netTreatments.map((value) => {
+            const entry = resolveTreatment(value);
+            if (!entry) unresolved.push(value);
+            return entry?.id ?? value;
+          });
+          if (unresolved.length) {
+            return fail(
+              `${unresolved.map((u) => `"${u}"`).join(", ")} ${unresolved.length === 1 ? "does" : "do"} not match any treatment in the TrialBridge catalogue, so no search was run.`,
+              "UNKNOWN_TREATMENT",
+              "The catalogue covers neuroendocrine tumor treatments only. Omit the treatment rather than approximating it.",
+            );
+          }
+          args.netTreatments = [...new Set(resolved)];
+        }
 
         // Mirror supplied arguments into the visible form first, so the person
         // sees the criteria that are about to be searched.
@@ -469,6 +705,9 @@ export function createTools(): ToolDescriptor[] {
             ...(args.recruitmentStatuses ? { recruitmentStatuses: args.recruitmentStatuses } : {}),
             ...(args.phases ? { phases: args.phases } : {}),
             ...(args.keywords != null ? { keywords: args.keywords } : {}),
+            ...(args.cancerId != null ? { cancerId: args.cancerId } : {}),
+            ...(args.cancerStage != null ? { cancerStage: args.cancerStage } : {}),
+            ...(args.netTreatments ? { netTreatments: args.netTreatments } : {}),
           });
           if (formUpdate.success && Object.keys(formUpdate.data).length) {
             store.setProfile(formUpdate.data);
@@ -493,28 +732,67 @@ export function createTools(): ToolDescriptor[] {
         }
 
         const result = await runSearch(merged.data);
+
+        // Revealing the withheld studies is the person's decision on the page,
+        // so an agent doing it on their behalf must leave it visible there too.
+        if (showPossiblyExcluded && result.hiddenTrials.length) {
+          useTrialStore.getState().setShowHiddenResults(true);
+        }
+
         useTrialStore
           .getState()
           .noteAgentAction(
             `Searched ClinicalTrials.gov for "${merged.data.condition}" (${result.trials.length} shown)`,
           );
 
+        const { meta } = result;
+
         return ok(
-          `Found ${result.meta.totalCount ?? result.trials.length} studies on ClinicalTrials.gov for "${merged.data.condition}"; the ${result.trials.length} shown are now displayed on the page.${
-            result.meta.warnings.length ? ` Note: ${result.meta.warnings.join(" ")}` : ""
-          }`,
+          `Checked ${meta.recordsChecked} ClinicalTrials.gov ${meta.recordsChecked === 1 ? "record" : "records"} for "${merged.data.condition}" and put ${meta.returnedCount} relevant ${meta.returnedCount === 1 ? "study" : "studies"} on the page${
+            meta.hiddenByPriorTreatment
+              ? `, withholding ${meta.hiddenByPriorTreatment} more that name a treatment already received`
+              : ""
+          }.${
+            meta.stopReason === "page-limit" || meta.stopReason === "record-limit"
+              ? " The search stopped at its own limit, so more studies may match."
+              : ""
+          }${meta.warnings.length ? ` Note: ${meta.warnings.join(" ")}` : ""}`,
           {
-            totalCount: result.meta.totalCount,
-            returnedCount: result.meta.returnedCount,
-            retrievedAt: result.meta.retrievedAt,
+            totalCount: meta.totalCount,
+            returnedCount: meta.returnedCount,
+            recordsChecked: meta.recordsChecked,
+            pagesFetched: meta.pagesFetched,
+            stopReason: meta.stopReason,
+            // Every study removed, and on what grounds — so the agent can
+            // explain a short list instead of guessing at one.
+            filtering: {
+              removedOffTopic: meta.removedOffTopic,
+              removedByStage: meta.removedByStage,
+              withheldByPriorTreatment: meta.hiddenByPriorTreatment,
+              note: "Removed studies are not judgements about this person. Off-topic studies were about a different disease; stage removals apply only where a study states a stage; withheld studies are shown on request.",
+            },
+            nextPageToken: meta.nextPageToken,
+            retrievedAt: meta.retrievedAt,
             source: "ClinicalTrials.gov API v2",
             searchedWith: merged.data,
-            resolvedLocation: result.meta.resolvedLocation,
-            warnings: result.meta.warnings,
-            trials: result.trials.map((t) => ({ ...trialSummary(t), ...analysisFor(t) })),
+            resolvedLocation: meta.resolvedLocation,
+            warnings: meta.warnings,
+            trials: result.trials.map((t) => ({
+              ...trialSummary(t),
+              ...analysisFor(t),
+              priorTreatment: priorTreatmentReport(t),
+            })),
+            withheldTrials: result.hiddenTrials.map((t) => ({
+              ...trialSummary(t),
+              ...analysisFor(t),
+              priorTreatment: priorTreatmentReport(t),
+            })),
             verification: {
               visibleInUi: true,
               resultsReplaced: true,
+              withheldTrialsVisibleToPerson: useTrialStore.getState().showHiddenResults,
+              howToShowWithheld:
+                "Call search_clinical_trials again with showPossiblyExcluded: true, or the person can select \"Show possibly excluded trials\" on the page.",
             },
             disclaimer: ELIGIBILITY_DISCLAIMER,
           },
@@ -548,6 +826,11 @@ export function createTools(): ToolDescriptor[] {
           apparentMatches: { type: "array", items: { type: "string" } },
           apparentMismatches: { type: "array", items: { type: "string" } },
           stillUnknown: { type: "array", items: { type: "string" } },
+          priorTreatment: {
+            type: "object",
+            description:
+              "How this study's published exclusion criteria read against the treatments entered, with the criterion quoted verbatim. status is one of not-screened, clear, timing-unclear or excluded — never an eligibility decision.",
+          },
           disclaimer: { type: "string" },
         },
         required: ["ok", "trial", "disclaimer"],
@@ -599,6 +882,7 @@ export function createTools(): ToolDescriptor[] {
             },
             eligibilityCriteria: trial.eligibilityCriteria,
             ...analysisFor(trial),
+            priorTreatment: priorTreatmentReport(trial),
             source: "ClinicalTrials.gov API v2",
             retrievedAt: trial.retrievedAt,
             sourceUrl: trial.sourceUrl,

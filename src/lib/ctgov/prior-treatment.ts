@@ -62,18 +62,36 @@ export interface PriorTreatmentAssessment {
    */
   hideRecommended: boolean;
   /**
-   * True when the eligibility text could not be split into inclusion and
-   * exclusion criteria, so no assessment was attempted. Such a study is always
-   * shown: an unreadable record is not evidence of exclusion.
+   * True when no screen was performed: no treatments were entered, none of them
+   * were in the catalogue, or the eligibility text could not be split into
+   * inclusion and exclusion criteria.
+   *
+   * Distinct from a clear result, and never evidence of anything. Such a study
+   * is always shown — an unreadable record is not evidence of exclusion.
    */
   notAssessed: boolean;
 }
 
+/** The criteria were read and nothing matched. */
 export const CLEAR_ASSESSMENT: PriorTreatmentAssessment = {
   status: "clear",
   matches: [],
   hideRecommended: false,
   notAssessed: false,
+};
+
+/**
+ * No screen was performed at all.
+ *
+ * Kept distinct from `CLEAR_ASSESSMENT`, which means the criteria were read and
+ * nothing matched. Collapsing the two would let a caller report "no exclusions
+ * found" about a study nobody checked.
+ */
+export const NOT_ASSESSED: PriorTreatmentAssessment = {
+  status: "clear",
+  matches: [],
+  hideRecommended: false,
+  notAssessed: true,
 };
 
 /**
@@ -268,21 +286,23 @@ export function isConditional(criterionText: string): boolean {
 /**
  * Assesses one trial against the treatments a person says they have had.
  *
- * Returns `CLEAR_ASSESSMENT` when no treatments were supplied, when the study
- * publishes no readable criteria, or when nothing matched — the three ways of
- * saying "this screen found nothing", none of which mean the person is
- * eligible.
+ * Two distinct kinds of "nothing found" come back, and the difference matters:
+ * `notAssessed` means no screen happened — no treatments were entered, none of
+ * them were in the catalogue, or the criteria could not be read — while
+ * `status: "clear"` with `notAssessed: false` means the exclusion criteria were
+ * read and none matched. Neither means the person is eligible.
  */
 export function assessPriorTreatments(
   trial: Trial,
   treatmentIds: readonly string[],
 ): PriorTreatmentAssessment {
-  if (!treatmentIds.length) return CLEAR_ASSESSMENT;
+  if (!treatmentIds.length) return NOT_ASSESSED;
 
   const treatments = treatmentIds
     .map((id) => findTreatment(id))
     .filter((t): t is NetTreatment => t !== undefined);
-  if (!treatments.length) return CLEAR_ASSESSMENT;
+  // Nothing resolvable to screen against; saying "clear" would be a claim.
+  if (!treatments.length) return NOT_ASSESSED;
 
   const parsed = parseCriteria(trial);
   const exclusionItems = parsed.criteria.filter((c) => c.type === "exclusion");
@@ -291,7 +311,7 @@ export function assessPriorTreatments(
   // fallback, where inclusion and exclusion text are indistinguishable. Reading
   // an exclusion into that would be guessing, so nothing is claimed.
   if (!parsed.segmented || exclusionItems.length === 0) {
-    return { status: "clear", matches: [], hideRecommended: false, notAssessed: true };
+    return NOT_ASSESSED;
   }
 
   const matches: PriorTreatmentMatch[] = [];

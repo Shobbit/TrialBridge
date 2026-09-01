@@ -214,17 +214,29 @@ describe("when the record cannot be read", () => {
     expect(assessPriorTreatments(study(""), EVEROLIMUS).notAssessed).toBe(true);
   });
 
-  it("assesses nothing when no treatments were entered", () => {
+  it("reports 'not screened' when no treatments were entered", () => {
+    // Not the same as "clear". Nobody checked, so nothing may be claimed.
     const trial = study(criteria(["NET"], ["Prior treatment with everolimus"]));
     const result = assessPriorTreatments(trial, []);
 
-    expect(result.status).toBe("clear");
-    expect(result.notAssessed).toBe(false);
+    expect(result.notAssessed).toBe(true);
+    expect(result.hideRecommended).toBe(false);
   });
 
-  it("ignores treatment ids that are not in the catalogue", () => {
+  it("reports 'not screened' when no entered treatment is in the catalogue", () => {
     const trial = study(criteria(["NET"], ["Prior treatment with everolimus"]));
-    expect(assessPriorTreatments(trial, ["not-a-real-drug"]).status).toBe("clear");
+    const result = assessPriorTreatments(trial, ["not-a-real-drug"]);
+
+    expect(result.notAssessed).toBe(true);
+    expect(result.hideRecommended).toBe(false);
+  });
+
+  it("reports a genuine clear result distinctly", () => {
+    const trial = study(criteria(["NET"], ["Pregnancy or breastfeeding"]));
+    const result = assessPriorTreatments(trial, EVEROLIMUS);
+
+    expect(result.status).toBe("clear");
+    expect(result.notAssessed).toBe(false);
   });
 });
 
