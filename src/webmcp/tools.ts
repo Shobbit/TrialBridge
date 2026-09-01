@@ -11,6 +11,7 @@ import {
 import { ELIGIBILITY_DISCLAIMER, analyzeTrial } from "@/lib/match";
 import { NET_CANCER_ID, findCancer } from "@/lib/catalog/cancers";
 import { resolveCancer, resolveTreatment } from "@/lib/catalog/lookup";
+import { isUnitedStates, resolveUsState } from "@/lib/catalog/us-states";
 import { findTreatment } from "@/lib/catalog/net-treatments";
 import { assessPriorTreatments } from "@/lib/ctgov/prior-treatment";
 import { parseCriteria } from "@/lib/criteria";
@@ -142,6 +143,32 @@ function trialSummary(trial: Trial) {
     retrievedAt: trial.retrievedAt,
   };
 }
+
+/**
+ * Holds an agent to the same constraint the form places on a person.
+ *
+ * Since the state field became a dropdown, a person searching the United States
+ * cannot mistype a state. Without this, an agent still could — and "Ilinois"
+ * geocodes to nothing, quietly narrowing the search with no visible cause. The
+ * project's claim is that the agent operates the same application, so the same
+ * rule has to apply to both.
+ *
+ * Outside the United States the field is free text for the person, so it stays
+ * free text for the agent too.
+ */
+function resolveStateInput(
+  country: string,
+  state: string,
+): { ok: true; value: string } | { ok: false } {
+  if (!state.trim()) return { ok: true, value: state };
+  if (!isUnitedStates(country)) return { ok: true, value: state };
+
+  const entry = resolveUsState(state);
+  return entry ? { ok: true, value: entry.name } : { ok: false };
+}
+
+const UNKNOWN_STATE_HINT =
+  'Use the full name, the two-letter code, or a common short form — "Illinois", "IL" or "Ill". If the person is not in the United States, set country first: the state field is free text everywhere else.';
 
 /**
  * Why a study was shown, flagged, or withheld.
@@ -382,7 +409,12 @@ export function createTools(): ToolDescriptor[] {
             description: "Only set this when the person volunteers it; many trials do not restrict by sex.",
           },
           city: { type: "string", maxLength: 100, description: "City name only." },
-          state: { type: "string", maxLength: 100, description: "State, province or region." },
+          state: {
+            type: "string",
+            maxLength: 100,
+            description:
+              "State, province or region. When the country is the United States this must name a real state, district or territory — the full name, the two-letter code, or a common short form (\"Illinois\", \"IL\", \"Ill\") — because the person's own form only lets them choose from a fixed list. An unrecognised US state is rejected rather than stored. For any other country this is free text, as it is for the person.",
+          },
           country: { type: "string", maxLength: 100, description: "Country name, e.g. United States." },
           travelDistanceMiles: {
             type: ["integer", "null"],
@@ -467,6 +499,21 @@ export function createTools(): ToolDescriptor[] {
           }
         }
 
+        if (update.state !== undefined) {
+          // The country may be arriving in this same call, so read it from the
+          // update first and fall back to what the form already holds.
+          const country = update.country ?? useTrialStore.getState().profile.country;
+          const resolved = resolveStateInput(country, update.state);
+          if (!resolved.ok) {
+            return fail(
+              `"${update.state}" is not a United States state, district or territory, so nothing was changed.`,
+              "UNKNOWN_STATE",
+              UNKNOWN_STATE_HINT,
+            );
+          }
+          update.state = resolved.value;
+        }
+
         if (update.netTreatments !== undefined) {
           const unresolved: string[] = [];
           const resolved = update.netTreatments.map((value) => {
@@ -533,7 +580,12 @@ export function createTools(): ToolDescriptor[] {
             description: "Condition or diagnosis. Defaults to the value in the form.",
           },
           city: { type: "string", maxLength: 100, description: "Defaults to the form value." },
-          state: { type: "string", maxLength: 100, description: "Defaults to the form value." },
+          state: {
+            type: "string",
+            maxLength: 100,
+            description:
+              "Defaults to the form value. Subject to the same rule as update_search_profile: a real state name, code or short form when the country is the United States.",
+          },
           country: { type: "string", maxLength: 100, description: "Defaults to the form value." },
           travelDistanceMiles: {
             type: ["integer", "null"],
@@ -672,6 +724,19 @@ export function createTools(): ToolDescriptor[] {
             );
           }
           args.cancerId = entry.id;
+        }
+
+        if (args.state != null) {
+          const country = args.country ?? useTrialStore.getState().profile.country;
+          const resolved = resolveStateInput(country, args.state);
+          if (!resolved.ok) {
+            return fail(
+              `"${args.state}" is not a United States state, district or territory, so no search was run.`,
+              "UNKNOWN_STATE",
+              UNKNOWN_STATE_HINT,
+            );
+          }
+          args.state = resolved.value;
         }
 
         if (args.netTreatments?.length) {

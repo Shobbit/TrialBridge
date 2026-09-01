@@ -10,6 +10,7 @@ import {
   type Trial,
 } from "./ctgov/types";
 import { CANCERS, NET_CANCER_ID } from "./catalog/cancers";
+import { canonicalStateName, isUnitedStates } from "./catalog/us-states";
 import type { Criterion } from "./criteria";
 import {
   EMPTY_PROFILE,
@@ -117,7 +118,7 @@ interface TrialState {
 const STORAGE_KEY = "trialbridge:v1";
 
 /** Current shape version of the persisted state. */
-export const PERSIST_VERSION = 3;
+export const PERSIST_VERSION = 4;
 
 /**
  * Maps a saved free-text condition onto a catalogue entry, if one clearly
@@ -193,10 +194,31 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
     existingCancerId ||
     (savedCondition ? (matchSavedConditionToCatalogue(savedCondition) ?? OTHER_CANCER_ID) : "");
 
+  /*
+   * v3 → v4: the free-text state box became a dropdown for US searches.
+   *
+   * A saved state is canonicalised only when it unambiguously names a real
+   * state — "IL" and "illinois" both become "Illinois", so the dropdown can
+   * show the saved value as selected. Anything else is kept exactly as typed
+   * and offered back in the list as entered, because a location someone chose
+   * is theirs to correct, not this app's to discard.
+   */
+  const savedState = typeof profile.state === "string" ? profile.state : "";
+  const savedCountry = typeof profile.country === "string" ? profile.country : "";
+  // An absent country counts as the United States, because that is what the
+  // schema defaults it to — a profile saved before the field existed is a US
+  // profile, and would otherwise never canonicalise.
+  const looksUnitedStates = !savedCountry || isUnitedStates(savedCountry);
+  const canonicalState =
+    savedState && looksUnitedStates
+      ? (canonicalStateName(savedState) ?? savedState)
+      : savedState;
+
   return {
     ...state,
     profile: {
       ...profile,
+      state: canonicalState,
       recruitmentStatuses: kept.length ? kept : [DEFAULT_SEARCH_STATUS],
       cancerId,
       condition: savedCondition,

@@ -421,3 +421,73 @@ describe("catalogue name resolution", () => {
     expect(resolveTreatment("")).toBeUndefined();
   });
 });
+
+describe("setting the state", () => {
+  it("accepts a code and stores the full state name", async () => {
+    // The form only lets a person choose from a list; the agent has to land on
+    // the same canonical value, not a variant of it.
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { state: "IL" });
+
+    expect(useTrialStore.getState().profile.state).toBe("Illinois");
+  });
+
+  it("accepts the full name in any casing", async () => {
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { state: "new york" });
+
+    expect(useTrialStore.getState().profile.state).toBe("New York");
+  });
+
+  it("refuses a misspelt US state and writes nothing", async () => {
+    // "Ilinois" geocodes to nothing, which would silently narrow the search.
+    const mcp = await mountWithTools();
+    const result = await mcp.call("update_search_profile", { state: "Ilinois" });
+
+    expect(result.isError).toBe(true);
+    expect(structured(result).error.code).toBe("UNKNOWN_STATE");
+    expect(useTrialStore.getState().profile.state).toBe("");
+  });
+
+  it("allows free text once the country is not the United States", async () => {
+    const mcp = await mountWithTools();
+    const result = await mcp.call("update_search_profile", {
+      country: "India",
+      state: "Maharashtra",
+    });
+
+    expect(structured(result).ok).toBe(true);
+    expect(useTrialStore.getState().profile.state).toBe("Maharashtra");
+  });
+
+  it("reads the country from the same call, not just the stored profile", async () => {
+    // Country and state arriving together must be judged together, or the
+    // first search after a move abroad is rejected for no reason.
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { country: "Canada", state: "Ontario" });
+
+    expect(useTrialStore.getState().profile.state).toBe("Ontario");
+  });
+
+  it("shows the agent's choice in the visible dropdown", async () => {
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { state: "TX" });
+
+    expect((screen.getByLabelText(/^state$/i) as HTMLSelectElement).value).toBe("Texas");
+  });
+
+  it("refuses a misspelt state at search time without running a search", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const mcp = await mountWithTools();
+
+    const result = await mcp.call("search_clinical_trials", {
+      condition: "melanoma",
+      state: "Californa",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(structured(result).error.code).toBe("UNKNOWN_STATE");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

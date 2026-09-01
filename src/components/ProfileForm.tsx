@@ -8,6 +8,7 @@ import { OTHER_CANCER_ID } from "@/lib/schemas";
 import { searchInputFromProfile, useTrialStore } from "@/lib/store";
 import { CancerSelect } from "./CancerSelect";
 import { NetTreatmentSelect } from "./NetTreatmentSelect";
+import { StateSelect } from "./StateSelect";
 import { Button, Panel, phaseLabel } from "./primitives";
 
 const FIELD =
@@ -186,19 +187,13 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
               autoComplete="address-level2"
             />
           </div>
-          <div>
-            <label className={LABEL} htmlFor={`${ids}-state`}>
-              State or region
-            </label>
-            <input
-              id={`${ids}-state`}
-              className={FIELD}
-              value={profile.state}
-              onChange={(e) => setProfile({ state: e.target.value })}
-              placeholder="e.g. Illinois"
-              autoComplete="address-level1"
-            />
-          </div>
+          <StateSelect
+            state={profile.state}
+            country={profile.country}
+            onChange={(state) => setProfile({ state })}
+            fieldClassName={FIELD}
+            labelClassName={LABEL}
+          />
           <div>
             <label className={LABEL} htmlFor={`${ids}-country`}>
               Country
