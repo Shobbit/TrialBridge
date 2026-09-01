@@ -9,7 +9,7 @@ import {
   runSearch,
 } from "@/lib/actions";
 import { ELIGIBILITY_DISCLAIMER, analyzeTrial } from "@/lib/match";
-import { findCancer } from "@/lib/catalog/cancers";
+import { NET_CANCER_ID, findCancer } from "@/lib/catalog/cancers";
 import { parseCriteria } from "@/lib/criteria";
 import {
   AGENT_COMPARISON_LABEL,
@@ -218,7 +218,11 @@ export function createTools(): ToolDescriptor[] {
         if (profile.age === null) missingFields.push("age");
         if (!profile.city && !profile.state) missingFields.push("city/state");
         if (profile.travelDistanceMiles === null) missingFields.push("travelDistanceMiles");
-        if (!profile.netTreatments.length) missingFields.push("netTreatments");
+        // Only meaningful where the treatment catalogue applies; asking an agent
+        // to fill it for another cancer would invite invented values.
+        if (profile.cancerId === NET_CANCER_ID && !profile.netTreatments.length) {
+          missingFields.push("netTreatments");
+        }
 
         return ok(
           readyToSearch

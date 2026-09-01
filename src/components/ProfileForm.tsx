@@ -3,9 +3,11 @@
 import { useId, useState } from "react";
 import { runSearch } from "@/lib/actions";
 import { TRIAL_PHASES } from "@/lib/ctgov/types";
+import { NET_CANCER_ID } from "@/lib/catalog/cancers";
 import { OTHER_CANCER_ID } from "@/lib/schemas";
 import { searchInputFromProfile, useTrialStore } from "@/lib/store";
 import { CancerSelect } from "./CancerSelect";
+import { NetTreatmentSelect } from "./NetTreatmentSelect";
 import { Button, Panel, phaseLabel } from "./primitives";
 
 const FIELD =
@@ -31,6 +33,8 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
     profile.cancerId !== "" &&
     (profile.cancerId !== OTHER_CANCER_ID || profile.condition.trim().length > 0);
   const canSearch = hasCancer && searchState !== "loading";
+  // The supplied treatment catalogue is NET-only.
+  const isNet = profile.cancerId === NET_CANCER_ID;
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -79,7 +83,14 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
         <CancerSelect
           cancerId={profile.cancerId}
           condition={profile.condition}
-          onChange={(next) => setProfile(next)}
+          onChange={(next) =>
+            setProfile(
+              // Treatment selections belong to the NET catalogue. Leaving them
+              // behind after a change of cancer would keep a hidden control
+              // driving the search.
+              next.cancerId === NET_CANCER_ID ? next : { ...next, netTreatments: [] },
+            )
+          }
           fieldClassName={FIELD}
           labelClassName={LABEL}
         />
@@ -273,54 +284,67 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
           </div>
         </fieldset>
 
-        <div>
-          <label className={LABEL} htmlFor={`${ids}-treatment`}>
-            Relevant treatments already received
-          </label>
-          <div className="flex gap-2">
-            <input
-              id={`${ids}-treatment`}
-              className={FIELD}
-              value={treatmentDraft}
-              onChange={(e) => setTreatmentDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addTreatment();
-                }
-              }}
-              placeholder="e.g. metformin, then press Add"
-              aria-describedby={`${ids}-treatment-help`}
-            />
-            <Button type="button" onClick={addTreatment} disabled={!treatmentDraft.trim()}>
-              Add
-            </Button>
+        {/*
+          The supplied treatment catalogue covers NET only, so it is offered
+          only for that selection. Other cancers keep the free-text field.
+        */}
+        {isNet ? (
+          <NetTreatmentSelect
+            selected={profile.netTreatments}
+            onChange={(netTreatments) => setProfile({ netTreatments })}
+            fieldClassName={FIELD}
+            labelClassName={LABEL}
+          />
+        ) : (
+          <div>
+            <label className={LABEL} htmlFor={`${ids}-treatment`}>
+              Relevant treatments already received
+            </label>
+            <div className="flex gap-2">
+              <input
+                id={`${ids}-treatment`}
+                className={FIELD}
+                value={treatmentDraft}
+                onChange={(e) => setTreatmentDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTreatment();
+                  }
+                }}
+                placeholder="e.g. carboplatin, then press Add"
+                aria-describedby={`${ids}-treatment-help`}
+              />
+              <Button type="button" onClick={addTreatment} disabled={!treatmentDraft.trim()}>
+                Add
+              </Button>
+            </div>
+            <p id={`${ids}-treatment-help`} className="mt-1 text-[11px] text-tb-muted">
+              Used only to flag where a trial&rsquo;s published criteria mention that treatment.
+            </p>
+            {profile.priorTreatments.length ? (
+              <ul className="mt-2 flex flex-wrap gap-1.5">
+                {profile.priorTreatments.map((treatment) => (
+                  <li key={treatment}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setProfile({
+                          priorTreatments: profile.priorTreatments.filter((t) => t !== treatment),
+                        })
+                      }
+                      className="inline-flex items-center gap-1 rounded-full border border-tb-border bg-tb-surface-2 px-2 py-0.5 text-[11px] hover:border-tb-mismatch/50"
+                      aria-label={`Remove ${treatment}`}
+                    >
+                      {treatment}
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
-          <p id={`${ids}-treatment-help`} className="mt-1 text-[11px] text-tb-muted">
-            Used only to flag where a trial&rsquo;s published criteria mention that treatment.
-          </p>
-          {profile.priorTreatments.length ? (
-            <ul className="mt-2 flex flex-wrap gap-1.5">
-              {profile.priorTreatments.map((treatment) => (
-                <li key={treatment}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setProfile({
-                        priorTreatments: profile.priorTreatments.filter((t) => t !== treatment),
-                      })
-                    }
-                    className="inline-flex items-center gap-1 rounded-full border border-tb-border bg-tb-surface-2 px-2 py-0.5 text-[11px] hover:border-tb-mismatch/50"
-                    aria-label={`Remove ${treatment}`}
-                  >
-                    {treatment}
-                    <span aria-hidden="true">×</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
+        )}
 
         <div>
           <label className={LABEL} htmlFor={`${ids}-keywords`}>

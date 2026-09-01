@@ -9,7 +9,7 @@ import {
   type SearchableRecruitmentStatus,
   type Trial,
 } from "./ctgov/types";
-import { CANCERS } from "./catalog/cancers";
+import { CANCERS, NET_CANCER_ID } from "./catalog/cancers";
 import type { Criterion } from "./criteria";
 import {
   EMPTY_PROFILE,
@@ -396,7 +396,10 @@ export function searchInputFromProfile(profile: SearchProfile): SearchInput | nu
     cancerStage: profile.cancerStage,
     // The fallback has no catalogue entry; `condition` carries the typed text.
     cancerId: profile.cancerId && profile.cancerId !== OTHER_CANCER_ID ? profile.cancerId : null,
-    netTreatments: profile.netTreatments,
+    // The treatment catalogue is NET-only, so its ids are sent only for NET.
+    // Without this, selections made for NET and then left behind by a change of
+    // cancer would keep driving exclusion matching from a hidden control.
+    netTreatments: profile.cancerId === NET_CANCER_ID ? profile.netTreatments : [],
     pageSize: 20,
   };
 }
