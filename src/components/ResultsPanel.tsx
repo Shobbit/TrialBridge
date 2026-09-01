@@ -59,10 +59,20 @@ export function ResultsPanel() {
       action={
         meta ? (
           <div className="flex flex-wrap gap-1.5">
+            {/*
+              What the numbers mean, kept honest: the registry's total is not
+              the number of relevant studies, and the number on screen is not
+              the number of records read. Saying "20 of 482" alone would imply
+              462 more like these are waiting.
+            */}
             <Badge tone="accent">
-              Showing {meta.returnedCount}
-              {meta.totalCount !== null ? ` of ${meta.totalCount.toLocaleString()}` : ""}
+              Showing {meta.returnedCount} relevant{" "}
+              {meta.returnedCount === 1 ? "trial" : "trials"} from {meta.recordsChecked}{" "}
+              {meta.recordsChecked === 1 ? "record" : "records"} checked
             </Badge>
+            {meta.totalCount !== null ? (
+              <Badge>{meta.totalCount.toLocaleString()} returned by the registry</Badge>
+            ) : null}
             {meta.resolvedLocation ? (
               <Badge>Centred on {meta.resolvedLocation.label.split(",")[0]}</Badge>
             ) : null}

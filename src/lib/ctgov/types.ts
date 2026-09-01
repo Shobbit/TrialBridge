@@ -149,10 +149,30 @@ export interface SearchMeta {
    * discarded, so the person can always read them.
    */
   hiddenByPriorTreatment: number;
+  /**
+   * Registry records read to produce this list.
+   *
+   * Always at least `returnedCount`, usually far more: the disease, stage and
+   * prior-treatment filters remove most of what the registry returns. Reported
+   * so "20 trials" is never mistaken for "20 records existed".
+   */
+  recordsChecked: number;
+  /** Upstream pages fetched for this one search. */
+  pagesFetched: number;
+  /**
+   * Why the search stopped.
+   *
+   * `no-more-pages` is the only value meaning the result set is complete.
+   * `page-limit` and `record-limit` mean the search hit its own bound and
+   * more studies may match.
+   */
+  stopReason: "target-reached" | "no-more-pages" | "page-limit" | "record-limit";
   nextPageToken: string | null;
   retrievedAt: string;
-  /** The exact upstream URL used, so results are auditable. */
+  /** The first upstream URL used, so a result is auditable at a glance. */
   upstreamUrl: string;
+  /** Every upstream URL used, in order, for the full audit trail. */
+  upstreamUrls: string[];
   /** Populated when a place name was resolved to coordinates. */
   resolvedLocation: {
     label: string;
