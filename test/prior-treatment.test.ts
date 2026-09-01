@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeStudy } from "@/lib/ctgov/normalize";
 import {
   assessPriorTreatments,
+  isAboutTreatmentHistory,
   isConditional,
   partitionByPriorTreatment,
 } from "@/lib/ctgov/prior-treatment";
@@ -16,8 +17,11 @@ import { rawStudyFixture } from "./fixtures";
  * intervention list, a drug the *inclusion* criteria explicitly permit, a
  * washout clause, a broad category word, an unreadable criteria block.
  *
- * All NCT ids and study details are fictional. Criteria wording follows the
- * patterns ClinicalTrials.gov actually publishes.
+ * Every NCT id used as test data is fictional. Two comments cite a real study
+ * by its public NCT id, because that is where the wording that broke this
+ * screen came from and a future reader needs to be able to re-check it. Those
+ * are public registry identifiers for studies, and contain no information
+ * about any patient.
  */
 
 const base = normalizeStudy(rawStudyFixture) as Trial;
@@ -313,5 +317,125 @@ describe("partitionByPriorTreatment", () => {
   it("leaves the input untouched", () => {
     partitionByPriorTreatment([excluding], EVEROLIMUS);
     expect(excluding.priorTreatment).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The criterion has to be about treatment history
+// ---------------------------------------------------------------------------
+
+/**
+ * Every wording below was taken from a live ClinicalTrials.gov record that this
+ * screen got wrong before these guards existed. Each names a drug the person
+ * had, inside a criterion that is not about having had it.
+ */
+describe("a drug named in a criterion that is not about treatment history", () => {
+  it("does not withhold on a hypersensitivity criterion", () => {
+    // NCT06889493. Having received nivolumab is not being allergic to it.
+    const result = assessPriorTreatments(
+      study(criteria(["NET"], ["Known hypersensitivity to ipilimumab or nivolumab or their excipients"])),
+      ["nivolumab"],
+    );
+
+    expect(result.status).toBe("clear");
+    expect(result.hideRecommended).toBe(false);
+  });
+
+  it("does not withhold on a pregnancy criterion naming the study's own drugs", () => {
+    // NCT05773274. The drug names describe the study arms, not the person.
+    const result = assessPriorTreatments(
+      study(
+        criteria(
+          ["NET"],
+          [
+            "Pregnant women are excluded from this study because 177Lu-DOTATATE is a peptide receptor radionuclide therapy with the potential for teratogenic effects. Breastfeeding should be discontinued if the mother is treated with everolimus or sunitinib",
+          ],
+        ),
+      ),
+      ["everolimus"],
+    );
+
+    expect(result.status).toBe("clear");
+    expect(result.hideRecommended).toBe(false);
+  });
+
+  it("does not withhold when the drug is merely named with no history cue", () => {
+    const result = assessPriorTreatments(
+      study(criteria(["NET"], ["Unable to swallow everolimus tablets"])),
+      ["everolimus"],
+    );
+
+    expect(result.status).toBe("clear");
+  });
+
+  it("still withholds on the real prior-treatment wordings the registry uses", () => {
+    // Verified live: each of these is a genuine bar.
+    const genuine = [
+      "Prior treatment with everolimus, sunitinib or PRRT",
+      "Ongoing treatment with a targeted agent (e.g., sunitinib or everolimus)",
+      "Previous treatment lines with everolimus",
+      "Patients who have received everolimus",
+      "History of everolimus therapy",
+    ];
+
+    for (const text of genuine) {
+      const result = assessPriorTreatments(study(criteria(["NET"], [text])), EVEROLIMUS);
+      expect(result.status, text).toBe("excluded");
+      expect(result.hideRecommended, text).toBe(true);
+    }
+  });
+
+  it("recognises the history cues and the vetoes directly", () => {
+    expect(isAboutTreatmentHistory("Prior treatment with everolimus")).toBe(true);
+    expect(isAboutTreatmentHistory("Peptide receptor radionuclide therapy at any time before randomisation")).toBe(true);
+    expect(isAboutTreatmentHistory("Everolimus within 4 weeks of study entry")).toBe(true);
+
+    expect(isAboutTreatmentHistory("Known hypersensitivity to nivolumab")).toBe(false);
+    expect(isAboutTreatmentHistory("Pregnant or breastfeeding")).toBe(false);
+    expect(isAboutTreatmentHistory("Uncontrolled hypertension")).toBe(false);
+    // A veto beats a cue: an allergy criterion is not treatment history even
+    // when it uses the word "prior".
+    expect(isAboutTreatmentHistory("Prior known hypersensitivity to everolimus")).toBe(false);
+  });
+});
+
+describe("the quoted evidence", () => {
+  const filler = "Uncontrolled intercurrent illness including but not limited to ongoing or active infection, symptomatic congestive heart failure, unstable angina pectoris, cardiac arrhythmia, or psychiatric illness or social situations that would limit compliance with study requirements. ";
+
+  it("always contains the phrase that matched, however long the criterion", () => {
+    // Measured live: three of thirteen quotes did not contain the drug they
+    // were offered as evidence for, because the excerpt was cut from the front.
+    const long = `${filler}${filler}Prior treatment with everolimus is not permitted.`;
+    const result = assessPriorTreatments(study(criteria(["NET"], [long])), EVEROLIMUS);
+
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0].excerpt.toLowerCase()).toContain("everolimus");
+  });
+
+  it("marks with an ellipsis that the quote was trimmed", () => {
+    const long = `${filler}${filler}Prior treatment with everolimus is not permitted. ${filler}`;
+    const { excerpt } = assessPriorTreatments(study(criteria(["NET"], [long])), EVEROLIMUS)
+      .matches[0];
+
+    expect(excerpt.startsWith("…")).toBe(true);
+    expect(excerpt.endsWith("…")).toBe(true);
+    expect(excerpt.toLowerCase()).toContain("everolimus");
+  });
+
+  it("quotes a short criterion whole, with no ellipsis", () => {
+    const { excerpt } = assessPriorTreatments(
+      study(criteria(["NET"], ["Prior treatment with everolimus"])),
+      EVEROLIMUS,
+    ).matches[0];
+
+    expect(excerpt).toBe("Prior treatment with everolimus");
+  });
+
+  it("keeps the quote within a readable length", () => {
+    const long = `${filler}${filler}${filler}Prior everolimus. ${filler}`;
+    const { excerpt } = assessPriorTreatments(study(criteria(["NET"], [long])), EVEROLIMUS)
+      .matches[0];
+
+    expect(excerpt.length).toBeLessThanOrEqual(324);
   });
 });

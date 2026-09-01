@@ -79,11 +79,40 @@ const ABBREVIATIONS: Record<string, string> = {
 };
 
 /**
+ * Words the registry uses interchangeably for "a malignancy", folded to one
+ * token.
+ *
+ * ClinicalTrials.gov publishes the same disease as "Small Cell Lung Cancer",
+ * "Small Cell Lung Carcinoma" and "Lung Neoplasms, Small Cell" depending on
+ * which vocabulary the sponsor used. Without this, a search for one wording
+ * drops studies published under another — and, worse, a conflict written as
+ * "non small cell lung cancer" fails to catch a study published as
+ * "Carcinoma, Non-Small-Cell Lung".
+ *
+ * Only the generic words are folded. Specific histologies — adenocarcinoma,
+ * sarcoma, melanoma, lymphoma, leukemia — are left alone, because those name
+ * different diseases rather than the same one differently.
+ */
+const MALIGNANCY_SYNONYMS: Record<string, string> = {
+  cancer: "cancer",
+  carcinoma: "cancer",
+  neoplasm: "cancer",
+  neoplasia: "cancer",
+  tumor: "cancer",
+  tumour: "cancer",
+  tumours: "cancer",
+  malignancy: "cancer",
+  malignancie: "cancer",
+  malignant: "cancer",
+};
+
+/**
  * Splits text into comparable tokens.
  *
  * Hyphens become spaces so "non-small" yields "non" and "small" — which is what
  * lets the conflict check see the negating prefix rather than losing it.
- * British/American spelling and simple plurals are folded.
+ * British/American spelling, simple plurals and the registry's interchangeable
+ * words for a malignancy are folded.
  */
 function tokenize(text: string): string[] {
   const expanded = text
@@ -96,13 +125,12 @@ function tokenize(text: string): string[] {
     .map((w) => ROMAN_TO_ARABIC[w] ?? w)
     .map((w) => w.replace(/ae/g, "e").replace(/our\b/g, "or"))
     .map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w))
+    // Folded last, so it sees words after plurals and spellings have settled.
+    .map((w) => MALIGNANCY_SYNONYMS[w] ?? w)
     .filter((w) => w.length > 0 && !STOPWORDS.has(w));
 }
 
 const isNumeric = (token: string) => /^\d+$/.test(token);
-
-/** Normalised form used for whole-phrase comparison. */
-const normalisePhrase = (text: string) => tokenize(text).join(" ");
 
 export type MatchReason =
   | "no-condition-selected"
@@ -156,15 +184,24 @@ function conditionSatisfies(condition: string, term: string): boolean {
  *
  * Checked before matching, because a conflicting phrase usually *contains* the
  * selection's own words.
+ *
+ * Matching is on the token set, not on word order. ClinicalTrials.gov publishes
+ * MeSH headings in inverted form — "Carcinoma, Non-Small-Cell Lung",
+ * "Leukemia, Myeloid, Chronic" — so requiring the conflict's own word order let
+ * pure NSCLC studies through a search for small cell lung cancer. Measured
+ * against the live API: four of twenty-six results were exclusively NSCLC.
+ *
+ * Order-independence does not loosen the check. Every token of the conflict
+ * must still be present, and the negating token is what decides it: "small cell
+ * lung cancer" lacks "non", so it can never satisfy the conflict "non small
+ * cell lung cancer" however the words are arranged.
  */
 function conditionConflicts(condition: string, cancer: CancerEntry): boolean {
-  const normalised = normalisePhrase(condition);
+  const conditionTokens = new Set(tokenize(condition));
   return cancer.conflicts.some((conflict) => {
     const conflictTokens = tokenize(conflict);
     if (!conflictTokens.length) return false;
-    // Whole-phrase containment: "non small cell lung cancer" inside the
-    // condition means this condition is the excluded subtype.
-    return normalised.includes(conflictTokens.join(" "));
+    return conflictTokens.every((t) => conditionTokens.has(t));
   });
 }
 

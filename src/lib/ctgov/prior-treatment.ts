@@ -175,6 +175,60 @@ const MECHANISM_PHRASES: Record<string, string[]> = {
 };
 
 /**
+ * Criteria whose subject is a reaction or a physiological state, not a
+ * treatment history.
+ *
+ * Both of these were found hiding real trials during live testing:
+ *
+ *   "Known hypersensitivity to ipilimumab or nivolumab or their excipients"
+ *   "Pregnant women are excluded ... breastfeeding should be discontinued if
+ *    the mother is treated with everolimus or sunitinib"
+ *
+ * Neither is about having already had the drug. The first is an allergy — most
+ * people who received nivolumab are not hypersensitive to it — and the second
+ * names the study's own arms while describing a pregnancy restriction. A drug
+ * appearing in either kind of criterion is a mention, so the study is left
+ * visible.
+ *
+ * The veto covers the whole criterion, which could in principle suppress a
+ * genuine bar written in the same bullet. That error points towards showing a
+ * trial rather than hiding one, which is the direction this module errs in
+ * everywhere else.
+ */
+const NOT_A_TREATMENT_HISTORY: RegExp[] = [
+  /\b(?:hypersensitiv|allerg|anaphyla|intoleran|contraindicat|excipient)/i,
+  /\b(?:pregnan|breast\s?-?feed|lactat|teratogen|abortifacient|nursing)/i,
+];
+
+/**
+ * Phrases that mark a criterion as being about what someone has already had.
+ *
+ * An exclusion that bars someone *because they received a drug* says so — this
+ * is how registries write it, without exception in the live records checked.
+ * Requiring one of these turns a drug mention into evidence, and stops a drug
+ * named incidentally (in a dosing note, a rationale, an unrelated clause) from
+ * withholding a study.
+ */
+const TREATMENT_HISTORY_CUES: RegExp[] = [
+  /\bprior\b/i,
+  /\bprevious(?:ly)?\b/i,
+  /\bhistory of\b/i,
+  /\bpre-?treated\b/i,
+  /\breceiv(?:ed|ing)\b/i,
+  /\btreat(?:ed|ment) with\b/i,
+  /\btherapy with\b/i,
+  /\bexposure to\b/i,
+  /\brefractory to\b/i,
+  /\bprogress(?:ed|ion) (?:on|after|following)\b/i,
+  /\bongoing (?:treatment|therapy|use)\b/i,
+  /\bcurrent(?:ly)? (?:taking|on|treated)\b/i,
+  /\blines? of (?:therapy|treatment)\b/i,
+  /\bat any time (?:before|prior)\b/i,
+  /\bwash\s?-?out\b/i,
+  /\bwithin\s+\d+\s*(?:day|week|month|year)/i,
+];
+
+/**
  * Markers that make a criterion conditional rather than absolute.
  *
  * Each of these means the bar depends on *when* or *whether* something
@@ -269,18 +323,61 @@ function label(treatment: NetTreatment): string {
  * Only the registry's own list marker and line wrapping are removed — those are
  * layout, not wording, and a blockquote supplies its own. Every word is the
  * registry's.
+ *
+ * When the criterion is too long to quote whole, the window is centred on the
+ * phrase that matched rather than taken from the start. Registries publish
+ * criteria hundreds of words long, and truncating from the front produced
+ * quotes that did not contain the drug they were offered as evidence for —
+ * measured live, three of thirteen. A quote that does not support the flag
+ * beside it is worse than no quote.
  */
-function excerpt(text: string): string {
+function excerpt(text: string, pattern?: RegExp): string {
   const collapsed = text
     .replace(/^\s*(?:[-*•‣▪]|\(?\d{1,3}[.)]|\(?[a-z][.)])\s+/i, "")
     .replace(/\s+/g, " ")
     .trim();
-  return collapsed.length <= MAX_EXCERPT ? collapsed : `${collapsed.slice(0, MAX_EXCERPT - 1)}…`;
+
+  if (collapsed.length <= MAX_EXCERPT) return collapsed;
+
+  const hit = pattern ? collapsed.match(pattern) : null;
+  if (!hit || hit.index === undefined) return `${collapsed.slice(0, MAX_EXCERPT - 1)}…`;
+
+  const centre = hit.index + Math.floor(hit[0].length / 2);
+  let end = Math.min(collapsed.length, centre + Math.ceil(MAX_EXCERPT / 2));
+  let start = Math.max(0, end - MAX_EXCERPT);
+  end = Math.min(collapsed.length, start + MAX_EXCERPT);
+
+  // Snap outwards to whitespace so the quote never begins or ends mid-word,
+  // but never so far that the matched phrase itself is cut.
+  if (start > 0) {
+    const space = collapsed.indexOf(" ", start);
+    if (space !== -1 && space < hit.index) start = space + 1;
+  }
+  if (end < collapsed.length) {
+    const space = collapsed.lastIndexOf(" ", end);
+    if (space > hit.index + hit[0].length) end = space;
+  }
+
+  return `${start > 0 ? "…" : ""}${collapsed.slice(start, end).trim()}${
+    end < collapsed.length ? "…" : ""
+  }`;
 }
 
 /** True when the criterion's bar depends on timing or a condition. */
 export function isConditional(criterionText: string): boolean {
   return CONDITIONAL_MARKERS.some((marker) => marker.test(criterionText));
+}
+
+/**
+ * True when this criterion is about treatment already received.
+ *
+ * A drug named in a criterion that fails this test is a mention, not a bar:
+ * an allergy, a pregnancy restriction, a dosing note, or the study describing
+ * its own arms.
+ */
+export function isAboutTreatmentHistory(criterionText: string): boolean {
+  if (NOT_A_TREATMENT_HISTORY.some((veto) => veto.test(criterionText))) return false;
+  return TREATMENT_HISTORY_CUES.some((cue) => cue.test(criterionText));
 }
 
 /**
@@ -321,6 +418,10 @@ export function assessPriorTreatments(
     if (!terms.length) continue;
 
     for (const item of exclusionItems) {
+      // The criterion must be about treatment already received. Without this,
+      // a drug named in an allergy or pregnancy clause withheld the study.
+      if (!isAboutTreatmentHistory(item.verbatimText)) continue;
+
       const found = terms.find((term) => term.pattern.test(item.verbatimText));
       if (!found) continue;
 
@@ -332,7 +433,7 @@ export function assessPriorTreatments(
         matchedVia: found.via,
         finding: isConditional(item.verbatimText) ? "timing-unclear" : "excluded",
         criterionId: item.criterionId,
-        excerpt: excerpt(item.verbatimText),
+        excerpt: excerpt(item.verbatimText, found.pattern),
       });
       // One criterion per treatment is enough evidence; repeating the same
       // finding for every restatement would bury it.

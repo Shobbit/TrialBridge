@@ -231,3 +231,75 @@ describe("filterByCancer", () => {
     expect(filterByCancer([], cancer("breast-cancer"))).toEqual({ kept: [], removed: 0 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Registry vocabulary
+// ---------------------------------------------------------------------------
+
+/**
+ * The wordings below are the ones ClinicalTrials.gov actually publishes, taken
+ * from a live search that this app got wrong. MeSH headings are inverted
+ * ("Carcinoma, Non-Small-Cell Lung"), and sponsors use "cancer", "carcinoma",
+ * "neoplasm" and "tumor" interchangeably for the same disease.
+ */
+describe("inverted MeSH headings", () => {
+  const invertedNsclc = [
+    "Carcinoma, Non-Small-Cell Lung",
+    "Lung Non-Small Cell Carcinoma",
+    "Lung Cancer, Non-Small Cell",
+    "Carcinoma, Non Small Cell Lung",
+  ];
+
+  for (const condition of invertedNsclc) {
+    it(`does not let "${condition}" satisfy small cell lung cancer`, () => {
+      // Live regression: four of twenty-six results for SCLC were exclusively
+      // NSCLC, because the conflict list required the registry to use the
+      // conflict's own word order.
+      expect(matches([condition], "small-cell-lung-cancer")).toBe(false);
+    });
+  }
+
+  it("still accepts genuine small cell lung cancer however it is written", () => {
+    for (const condition of [
+      "Small Cell Lung Cancer",
+      "Small Cell Lung Carcinoma",
+      "Carcinoma, Small Cell Lung",
+      "Lung Neoplasms, Small Cell",
+      "SCLC",
+    ]) {
+      expect(matches([condition], "small-cell-lung-cancer")).toBe(true);
+    }
+  });
+
+  it("catches an inverted chronic leukaemia heading in an acute search", () => {
+    expect(matches(["Leukemia, Myeloid, Chronic"], "acute-myeloid-leukemia")).toBe(false);
+    expect(matches(["Leukemia, Myeloid, Acute"], "acute-myeloid-leukemia")).toBe(true);
+  });
+
+  it("keeps a basket trial that lists both subtypes", () => {
+    // One matching condition is enough; a study of both is a real option.
+    expect(
+      matches(["Carcinoma, Non-Small-Cell Lung", "Small Cell Lung Carcinoma"], "small-cell-lung-cancer"),
+    ).toBe(true);
+  });
+});
+
+describe("interchangeable words for a malignancy", () => {
+  it("treats cancer, carcinoma, neoplasm and tumor as the same word", () => {
+    expect(matches(["Breast Carcinoma"], "breast-cancer")).toBe(true);
+    expect(matches(["Breast Neoplasms"], "breast-cancer")).toBe(true);
+    expect(matches(["Malignant Neoplasm of Breast"], "breast-cancer")).toBe(true);
+    expect(matches(["Neuroendocrine Neoplasms"], "neuroendocrine-and-adrenal-tumors")).toBe(true);
+  });
+
+  it("does not fold specific histologies into each other", () => {
+    // "Melanoma" and "Sarcoma" are diseases, not synonyms for "cancer".
+    expect(matches(["Sarcoma"], "melanoma-cutaneous")).toBe(false);
+    expect(matches(["Breast Sarcoma"], "breast-cancer")).toBe(false);
+  });
+
+  it("does not let the shared word alone create a match", () => {
+    expect(matches(["Lung Carcinoma"], "breast-cancer")).toBe(false);
+    expect(matches(["Cancer"], "breast-cancer")).toBe(false);
+  });
+});
