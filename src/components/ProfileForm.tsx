@@ -136,6 +136,35 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
           </div>
         </div>
 
+        <div>
+          <label className={LABEL} htmlFor={`${ids}-stage`}>
+            Cancer stage (if you have been given one)
+          </label>
+          <select
+            id={`${ids}-stage`}
+            className={FIELD}
+            value={profile.cancerStage}
+            onChange={(e) =>
+              setProfile({ cancerStage: e.target.value as typeof profile.cancerStage })
+            }
+            aria-describedby={`${ids}-stage-help`}
+          >
+            <option value="unspecified">Not applicable or not known</option>
+            <option value="0">Stage 0</option>
+            <option value="I">Stage I</option>
+            <option value="II">Stage II</option>
+            <option value="III">Stage III</option>
+            <option value="IV">Stage IV</option>
+          </select>
+          <p id={`${ids}-stage-help`} className="mt-1 text-[11px] text-tb-muted">
+            Leave this alone for non-cancer conditions. ClinicalTrials.gov has no separate stage
+            field, so stage is written into each study&rsquo;s eligibility text. Selecting a stage
+            steers the search toward studies that mention it and highlights where they do —{" "}
+            <strong>it never removes a study on its own</strong>, because staging language varies
+            and only the study team can judge it.
+          </p>
+        </div>
+
         <fieldset className="grid gap-3 sm:grid-cols-3">
           <legend className="sr-only">Location</legend>
           <div>
@@ -216,56 +245,21 @@ export function ProfileForm({ onClearRequest }: { onClearRequest: () => void }) 
         */}
         <fieldset>
           <legend className={LABEL}>Recruitment status</legend>
-          <label className="flex items-start gap-2 text-xs">
-            <input
-              type="checkbox"
-              className="mt-0.5"
-              checked={profile.recruitmentStatuses.includes("RECRUITING")}
-              onChange={(e) => toggleArrayValue("recruitmentStatuses", "RECRUITING", e.target.checked)}
-              aria-describedby={`${ids}-recruiting-help`}
-            />
-            <span>
-              <span className="font-medium">Recruiting now</span>
-              <span id={`${ids}-recruiting-help`} className="block text-[11px] text-tb-muted">
-                Studies currently enrolling participants. Recommended.
-              </span>
+          {/*
+            Recruiting is now the only searchable status, so this is a
+            statement rather than a control. Nobody using this app is looking
+            for a study they cannot join, and every other status — including
+            "not yet recruiting" — means exactly that today.
+          */}
+          <p className="rounded-lg border border-tb-match/30 bg-tb-match-soft px-3 py-2 text-xs">
+            <span className="font-medium text-tb-match">Recruiting now — always</span>
+            <span className="mt-0.5 block text-[11px] text-tb-text/85">
+              Only studies currently enrolling participants are searched. Completed, terminated,
+              withdrawn, suspended, active-not-recruiting, enrolling-by-invitation and
+              not-yet-recruiting studies are never shown, because you could not join them today.
+              A study already on your shortlist still shows its true status if that later changes.
             </span>
-          </label>
-
-          <details className="mt-2">
-            <summary className="cursor-pointer text-[11px] font-medium text-tb-accent">
-              Advanced status options
-            </summary>
-            <label className="mt-1.5 flex items-start gap-2 text-xs">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={profile.recruitmentStatuses.includes("NOT_YET_RECRUITING")}
-                onChange={(e) =>
-                  toggleArrayValue("recruitmentStatuses", "NOT_YET_RECRUITING", e.target.checked)
-                }
-                aria-describedby={`${ids}-nyr-help`}
-              />
-              <span>
-                <span className="font-medium">Not yet recruiting</span>
-                <span id={`${ids}-nyr-help`} className="block text-[11px] text-tb-muted">
-                  <strong>Not currently enrolling.</strong> These studies have been registered but
-                  have not opened. Useful for planning ahead, not for enrolling today.
-                </span>
-              </span>
-            </label>
-            <p className="mt-2 text-[11px] text-tb-muted">
-              Completed, terminated, withdrawn, suspended and active-not-recruiting studies are not
-              searchable, because they cannot enrol new participants. A study you have already
-              shortlisted will still show its true status if that status later changes.
-            </p>
-          </details>
-
-          {profile.recruitmentStatuses.length === 0 ? (
-            <p role="status" className="mt-2 text-[11px] text-tb-unknown">
-              No status selected — searching will use “Recruiting now”.
-            </p>
-          ) : null}
+          </p>
         </fieldset>
 
         <fieldset>

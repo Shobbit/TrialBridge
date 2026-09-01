@@ -145,14 +145,68 @@ describe("condition analysis", () => {
 });
 
 describe("prior treatments", () => {
-  it("always reports prior therapy as unknown, never as a decision", () => {
-    const a = analyzeTrial(
-      baseTrial,
-      profile({ priorTreatments: ["Example Compound"] }),
-    );
-    expect(a.unknowns.some((f) => f.field === "priorTreatments")).toBe(true);
+  // The fixture excludes "Prior treatment with an example compound."
+  it("raises a treatment named in the exclusion criteria to a visible mismatch", () => {
+    const a = analyzeTrial(baseTrial, profile({ priorTreatments: ["Example Compound"] }));
+    const finding = a.mismatches.find((f) => f.field === "priorTreatments");
+
+    expect(finding).toBeDefined();
+    // Still a prompt to check, never a verdict.
+    expect(finding!.detail).toMatch(/raise this with the study team/i);
+    expect(finding!.detail.toLowerCase()).not.toContain("ineligible");
+    expect(finding!.detail.toLowerCase()).not.toContain("you do not qualify");
+  });
+
+  it("never promotes a prior treatment to a match", () => {
+    const a = analyzeTrial(baseTrial, profile({ priorTreatments: ["Example Compound"] }));
     expect(a.matches.some((f) => f.field === "priorTreatments")).toBe(false);
+  });
+
+  it("reports a treatment named only in the inclusion criteria as unknown", () => {
+    const a = analyzeTrial(baseTrial, profile({ priorTreatments: ["organ function"] }));
+    expect(a.unknowns.some((f) => f.field === "priorTreatments")).toBe(true);
     expect(a.mismatches.some((f) => f.field === "priorTreatments")).toBe(false);
+  });
+
+  it("reports an unmentioned treatment as unknown, not as acceptable", () => {
+    const a = analyzeTrial(baseTrial, profile({ priorTreatments: ["something not mentioned"] }));
+    const finding = a.unknowns.find((f) => f.field === "priorTreatments");
+    expect(finding).toBeDefined();
+    expect(finding!.detail).toMatch(/does not mean/i);
+    expect(a.mismatches.some((f) => f.field === "priorTreatments")).toBe(false);
+  });
+});
+
+describe("cancer stage", () => {
+  it("is not checked at all when no stage was entered", () => {
+    const a = analyzeTrial(baseTrial, profile({}));
+    expect([...a.matches, ...a.mismatches, ...a.unknowns].some((f) => f.field === "cancerStage")).toBe(
+      false,
+    );
+  });
+
+  it("flags a stage the criteria mention, without deciding anything", () => {
+    const staged = withTrial({
+      eligibilityCriteria: "Inclusion Criteria:\n\n1. Stage III disease confirmed by biopsy.",
+    });
+    const a = analyzeTrial(staged, profile({ cancerStage: "III" }));
+    const finding = a.matches.find((f) => f.field === "cancerStage");
+    expect(finding).toBeDefined();
+    expect(finding!.detail).toMatch(/for the study team to confirm/i);
+  });
+
+  it("recognises the arabic form of a roman stage", () => {
+    const staged = withTrial({
+      eligibilityCriteria: "Inclusion Criteria:\n\n1. Stage 4 disease.",
+    });
+    const a = analyzeTrial(staged, profile({ cancerStage: "IV" }));
+    expect(a.matches.some((f) => f.field === "cancerStage")).toBe(true);
+  });
+
+  it("never turns an unrecognised stage into a mismatch", () => {
+    const a = analyzeTrial(baseTrial, profile({ cancerStage: "IV" }));
+    expect(a.unknowns.some((f) => f.field === "cancerStage")).toBe(true);
+    expect(a.mismatches.some((f) => f.field === "cancerStage")).toBe(false);
   });
 });
 

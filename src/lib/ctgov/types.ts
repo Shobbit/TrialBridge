@@ -36,14 +36,16 @@ export type RecruitmentStatus = (typeof RECRUITMENT_STATUSES)[number];
  * excluded as well: participants cannot refer themselves into those studies,
  * so offering them would mislead.
  *
- * `RECRUITING` is the default. `NOT_YET_RECRUITING` is available as an
- * advanced choice because a site opening soon is genuine planning signal — it
- * is labelled "not currently enrolling" everywhere it appears.
+ * `RECRUITING` is the only searchable status. Everything else — including
+ * `NOT_YET_RECRUITING`, which was previously offered as an advanced choice —
+ * cannot enrol someone today, and nobody searching this app is looking for a
+ * study they cannot join.
  *
  * This restriction applies to searching only. `get_trial_details` retrieves any
- * valid NCT record whatever its status.
+ * valid NCT record whatever its status, and a study already on the shortlist
+ * still displays its true status if that later changes.
  */
-export const SEARCHABLE_RECRUITMENT_STATUSES = ["RECRUITING", "NOT_YET_RECRUITING"] as const;
+export const SEARCHABLE_RECRUITMENT_STATUSES = ["RECRUITING"] as const;
 export type SearchableRecruitmentStatus = (typeof SEARCHABLE_RECRUITMENT_STATUSES)[number];
 
 /** Applied when a caller omits the status filter entirely. */
@@ -120,6 +122,8 @@ export interface Trial {
 export interface SearchMeta {
   totalCount: number | null;
   returnedCount: number;
+  /** Studies dropped because they were not about the searched condition. */
+  removedOffTopic: number;
   nextPageToken: string | null;
   retrievedAt: string;
   /** The exact upstream URL used, so results are auditable. */

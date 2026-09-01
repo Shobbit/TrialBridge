@@ -49,8 +49,8 @@ beforeEach(() => {
 // --------------------------------------------------------------------------
 
 describe("the searchable status set", () => {
-  it("is exactly RECRUITING and NOT_YET_RECRUITING", () => {
-    expect([...SEARCHABLE_RECRUITMENT_STATUSES]).toEqual(["RECRUITING", "NOT_YET_RECRUITING"]);
+  it("is exactly RECRUITING and nothing else", () => {
+    expect([...SEARCHABLE_RECRUITMENT_STATUSES]).toEqual(["RECRUITING"]);
   });
 
   it("excludes every status that cannot enrol a new participant", () => {
@@ -62,6 +62,8 @@ describe("the searchable status set", () => {
       "ACTIVE_NOT_RECRUITING",
       "ENROLLING_BY_INVITATION",
       "UNKNOWN",
+      // Removed from search entirely: it cannot enrol anyone today either.
+      "NOT_YET_RECRUITING",
     ]) {
       expect(SEARCHABLE_RECRUITMENT_STATUSES as readonly string[]).not.toContain(closed);
     }
@@ -82,12 +84,12 @@ describe("defaults", () => {
     expect(EMPTY_PROFILE.recruitmentStatuses).not.toContain("NOT_YET_RECRUITING");
   });
 
-  it("keeps Not yet recruiting available as an opt-in", () => {
+  it("no longer accepts Not yet recruiting", () => {
     const parsed = searchInputSchema.safeParse({
       condition: "example condition",
       recruitmentStatuses: ["RECRUITING", "NOT_YET_RECRUITING"],
     });
-    expect(parsed.success).toBe(true);
+    expect(parsed.success).toBe(false);
   });
 });
 
@@ -129,14 +131,9 @@ describe("server injects the default when the status is omitted", () => {
     expect(upstreamUrl().searchParams.has("filter.overallStatus")).toBe(true);
   });
 
-  it("honours an explicit opt-in to Not yet recruiting", async () => {
-    await post({
-      condition: "example condition",
-      recruitmentStatuses: ["RECRUITING", "NOT_YET_RECRUITING"],
-    });
-    expect(upstreamUrl().searchParams.get("filter.overallStatus")).toBe(
-      "RECRUITING|NOT_YET_RECRUITING",
-    );
+  it("always sends RECRUITING, whatever else was asked for", async () => {
+    await post({ condition: "example condition", recruitmentStatuses: ["RECRUITING"] });
+    expect(upstreamUrl().searchParams.get("filter.overallStatus")).toBe("RECRUITING");
   });
 
   it("returns 400 with a readable message for a closed status", async () => {
@@ -153,16 +150,16 @@ describe("server injects the default when the status is omitted", () => {
 });
 
 describe("query builder", () => {
-  it("pipe-joins only searchable statuses", () => {
+  it("sends only the recruiting status", () => {
     const url = new URL(
       buildSearchUrl({
         input: searchInputSchema.parse({
           condition: "example condition",
-          recruitmentStatuses: ["RECRUITING", "NOT_YET_RECRUITING"],
+          recruitmentStatuses: ["RECRUITING"],
         }),
       }),
     );
-    expect(url.searchParams.get("filter.overallStatus")).toBe("RECRUITING|NOT_YET_RECRUITING");
+    expect(url.searchParams.get("filter.overallStatus")).toBe("RECRUITING");
   });
 });
 
@@ -178,7 +175,7 @@ describe("WebMCP tool schemas", () => {
   it.each(["search_clinical_trials", "update_search_profile"])(
     "%s offers only enrolling statuses",
     (toolName) => {
-      expect(statusEnum(toolName)).toEqual(["RECRUITING", "NOT_YET_RECRUITING"]);
+      expect(statusEnum(toolName)).toEqual(["RECRUITING"]);
     },
   );
 

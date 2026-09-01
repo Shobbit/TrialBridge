@@ -11,6 +11,23 @@ import {
  * through a tool that a human could not have typed into the form.
  */
 
+/**
+ * Cancer stage, as patients are told it.
+ *
+ * ClinicalTrials.gov has no structured stage field - stage lives inside the
+ * free-text eligibility criteria - so this is used to bias the query and to
+ * flag where a study mentions the stage, never to compute eligibility.
+ */
+export const cancerStageSchema = z.enum([
+  "unspecified",
+  "0",
+  "I",
+  "II",
+  "III",
+  "IV",
+]);
+export type CancerStage = z.infer<typeof cancerStageSchema>;
+
 /** Sex is collected only because trials themselves restrict on it. */
 export const profileSexSchema = z.enum(["unspecified", "male", "female"]);
 
@@ -46,6 +63,7 @@ const profileFields = {
   // Committed atomically via the "Add" button, so trimming is safe here.
   priorTreatments: z.array(z.string().trim().max(120)).max(25),
   keywords: z.string().max(200),
+  cancerStage: cancerStageSchema,
 } as const;
 
 /**
@@ -67,6 +85,7 @@ export const profileSchema = z.object({
   phases: profileFields.phases.default([]),
   priorTreatments: profileFields.priorTreatments.default([]),
   keywords: profileFields.keywords.default(""),
+  cancerStage: profileFields.cancerStage.default("unspecified"),
 });
 
 export type SearchProfile = z.infer<typeof profileSchema>;
@@ -112,6 +131,7 @@ export const searchInputSchema = z.object({
   phases: z.array(z.enum(TRIAL_PHASES)).max(6).optional(),
   intervention: z.string().trim().max(120).nullish(),
   keywords: z.string().trim().max(200).nullish(),
+  cancerStage: cancerStageSchema.nullish(),
   pageSize: z.number().int().min(1).max(50).optional(),
   pageToken: z.string().trim().max(400).nullish(),
 });

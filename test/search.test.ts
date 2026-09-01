@@ -39,16 +39,13 @@ describe("buildSearchUrl", () => {
     expect(url.searchParams.get("format")).toBe("json");
   });
 
-  it("pipe-joins recruitment statuses", () => {
+  it("sends the recruiting status filter", () => {
     const url = new URL(
       buildSearchUrl({
-        input: searchInputSchema.parse({
-          ...base,
-          recruitmentStatuses: ["RECRUITING", "NOT_YET_RECRUITING"],
-        }),
+        input: searchInputSchema.parse({ ...base, recruitmentStatuses: ["RECRUITING"] }),
       }),
     );
-    expect(url.searchParams.get("filter.overallStatus")).toBe("RECRUITING|NOT_YET_RECRUITING");
+    expect(url.searchParams.get("filter.overallStatus")).toBe("RECRUITING");
   });
 
   it("builds an Essie phase expression, parenthesised only when multiple", () => {

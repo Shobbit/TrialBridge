@@ -3,6 +3,7 @@ import { z } from "zod";
 import { UpstreamError, fetchUpstreamJson } from "@/lib/ctgov/fetch";
 import { normalizeStudy } from "@/lib/ctgov/normalize";
 import { buildSearchUrl } from "@/lib/ctgov/query";
+import { filterByCondition } from "@/lib/ctgov/relevance";
 import { DEFAULT_SEARCH_STATUS, type SearchResponse, type Trial } from "@/lib/ctgov/types";
 import { geocodePlace } from "@/lib/geocode";
 import { searchInputSchema, type SearchInput } from "@/lib/schemas";
@@ -84,12 +85,27 @@ export async function POST(request: Request) {
     const payload = (raw ?? {}) as Record<string, unknown>;
     const studies = Array.isArray(payload.studies) ? payload.studies : [];
 
-    const trials: Trial[] = studies
+    const normalized: Trial[] = studies
       .map((study) => normalizeStudy(study, origin))
       .filter((t): t is Trial => t !== null);
 
-    if (studies.length > 0 && trials.length === 0) {
+    if (studies.length > 0 && normalized.length === 0) {
       warnings.push("Records were returned but none contained a usable study identifier.");
+    }
+
+    /*
+     * ClinicalTrials.gov matches conditions loosely: a search for
+     * "type 2 diabetes" returns studies listing only "Healthy Participants" or
+     * "Type 1 Diabetes". Those are the wrong disease, so they are dropped here
+     * rather than shown. The count is reported so the person can see it
+     * happened instead of wondering why the totals disagree.
+     */
+    const { kept: trials, removed: offTopic } = filterByCondition(normalized, input.condition);
+
+    if (offTopic > 0) {
+      warnings.push(
+        `${offTopic} ${offTopic === 1 ? "study was" : "studies were"} returned by ClinicalTrials.gov but ${offTopic === 1 ? "does" : "do"} not list ${input.condition} among the conditions studied, so ${offTopic === 1 ? "it was" : "they were"} not shown.`,
+      );
     }
 
     const response: SearchResponse = {
@@ -97,6 +113,7 @@ export async function POST(request: Request) {
       meta: {
         totalCount: typeof payload.totalCount === "number" ? payload.totalCount : null,
         returnedCount: trials.length,
+        removedOffTopic: offTopic,
         nextPageToken: typeof payload.nextPageToken === "string" ? payload.nextPageToken : null,
         retrievedAt: new Date().toISOString(),
         upstreamUrl,

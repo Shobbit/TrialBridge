@@ -60,6 +60,11 @@ export function buildSearchUrl({ input, origin }: BuildSearchUrlOptions): string
   const terms: string[] = [];
   if (input.keywords) terms.push(escapeEssie(input.keywords));
   if (input.intervention) terms.push(escapeEssie(input.intervention));
+  // Stage has no structured field upstream, so it can only bias the free-text
+  // search. It is never treated as a hard filter.
+  if (input.cancerStage && input.cancerStage !== "unspecified") {
+    terms.push(escapeEssie(`stage `));
+  }
   if (terms.length) params.set("query.term", terms.join(" "));
 
   if (input.recruitmentStatuses?.length) {

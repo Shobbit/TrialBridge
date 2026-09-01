@@ -48,15 +48,12 @@ describe("closed statuses are removed", () => {
     expect(profileOf(migrated).recruitmentStatuses).toEqual(["RECRUITING"]);
   });
 
-  it("keeps both enrolling statuses when both were saved", () => {
+  it("drops NOT_YET_RECRUITING too, now that only RECRUITING is searchable", () => {
     const migrated = migratePersistedState(
       v1State(["RECRUITING", "NOT_YET_RECRUITING", "TERMINATED"]),
       1,
     );
-    expect(profileOf(migrated).recruitmentStatuses).toEqual([
-      "RECRUITING",
-      "NOT_YET_RECRUITING",
-    ]);
+    expect(profileOf(migrated).recruitmentStatuses).toEqual(["RECRUITING"]);
   });
 
   it("removes every status that can no longer be searched", () => {
@@ -140,7 +137,7 @@ describe("the migrated profile is accepted by the current schema", () => {
     [["COMPLETED", "TERMINATED"]],
     [[]],
     [null],
-    [["NOT_YET_RECRUITING", "WITHDRAWN"]],
+    [["NOT_YET_RECRUITING", "WITHDRAWN"]], // both now unsearchable -> falls back
   ])("profileSchema.parse succeeds after migrating %j", (statuses) => {
     const migrated = migratePersistedState(v1State(statuses), 1);
     const parsed = profileSchema.safeParse(profileOf(migrated));

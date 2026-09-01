@@ -1,5 +1,6 @@
 import type { SearchProfile } from "./schemas";
 import type { Trial } from "./ctgov/types";
+import { parseCriteria } from "./criteria";
 
 /**
  * Deterministic, rule-based comparison between a self-entered profile and the
@@ -27,7 +28,8 @@ export type FindingField =
   | "phase"
   | "condition"
   | "eligibilityCriteria"
-  | "priorTreatments";
+  | "priorTreatments"
+  | "cancerStage";
 
 export interface Finding {
   field: FindingField;
@@ -44,6 +46,45 @@ export interface TrialAnalysis {
 }
 
 const norm = (s: string) => s.toLowerCase().trim();
+
+/**
+ * Splits the eligibility text into its inclusion and exclusion halves.
+ *
+ * Only used to decide *where* a prior treatment is mentioned. The text itself
+ * is never interpreted; a mention is reported, not judged.
+ */
+function criteriaSections(trial: Trial): { inclusionText: string; exclusionText: string } {
+  const parsed = parseCriteria(trial);
+  const join = (type: "inclusion" | "exclusion") =>
+    norm(
+      parsed.criteria
+        .filter((c) => c.type === type)
+        .map((c) => c.verbatimText)
+        .join(" "),
+    );
+
+  // When the registry text could not be segmented, treat the whole block as
+  // inclusion so nothing is wrongly reported as an exclusion conflict.
+  if (!parsed.segmented) {
+    return { inclusionText: norm(trial.eligibilityCriteria ?? ""), exclusionText: "" };
+  }
+  return { inclusionText: join("inclusion"), exclusionText: join("exclusion") };
+}
+
+/**
+ * Whether the criteria text names a given stage.
+ *
+ * Handles the arabic/roman forms that appear in practice ("Stage 4",
+ * "Stage IV", "stage iv"). Deliberately conservative: no match means "not
+ * recognised", never "not applicable".
+ */
+function mentionsStage(criteriaText: string, stage: string): boolean {
+  const arabic: Record<string, string> = { "0": "0", I: "1", II: "2", III: "3", IV: "4" };
+  const roman = stage;
+  const digit = arabic[stage] ?? stage;
+  const pattern = new RegExp(`stage\\s*(?:${roman}|${digit})\\b`, "i");
+  return pattern.test(criteriaText);
+}
 
 /** True when any meaningful token of the query appears in the studied conditions. */
 function conditionOverlap(trial: Trial, condition: string): boolean {
@@ -202,21 +243,73 @@ export function analyzeTrial(trial: Trial, profile: SearchProfile): TrialAnalysi
     );
   }
 
-  // --- Prior treatments ---------------------------------------------------
-  if (profile.priorTreatments.length) {
-    const criteria = norm(trial.eligibilityCriteria ?? "");
-    const mentioned = profile.priorTreatments.filter((t) => t && criteria.includes(norm(t)));
-    if (mentioned.length) {
+  // --- Cancer stage -------------------------------------------------------
+  if (profile.cancerStage !== "unspecified") {
+    const criteria = trial.eligibilityCriteria ?? "";
+    if (!criteria) {
       add(
-        "priorTreatments",
+        "cancerStage",
         "unknown",
-        `The eligibility text mentions ${mentioned.join(", ")}. Prior therapy can be either required or disqualifying, and only the study team can say which applies here.`,
+        `You entered stage ${profile.cancerStage}, but this study publishes no readable eligibility text to check it against.`,
+      );
+    } else if (mentionsStage(criteria, profile.cancerStage)) {
+      add(
+        "cancerStage",
+        "match",
+        `The eligibility text mentions stage ${profile.cancerStage}. Whether it is included or excluded there is for the study team to confirm.`,
       );
     } else {
       add(
+        "cancerStage",
+        "unknown",
+        `The eligibility text does not name stage ${profile.cancerStage} in a form this page can recognise. Staging is written many different ways, so this is not evidence either way — ask the study team.`,
+      );
+    }
+  }
+
+  // --- Prior treatments ---------------------------------------------------
+  if (profile.priorTreatments.length) {
+    const { inclusionText, exclusionText } = criteriaSections(trial);
+
+    const inExclusion = profile.priorTreatments.filter(
+      (t) => t && exclusionText.includes(norm(t)),
+    );
+    const inInclusion = profile.priorTreatments.filter(
+      (t) => t && inclusionText.includes(norm(t)) && !exclusionText.includes(norm(t)),
+    );
+    const unmentioned = profile.priorTreatments.filter(
+      (t) => t && !inclusionText.includes(norm(t)) && !exclusionText.includes(norm(t)),
+    );
+
+    /*
+     * A prior treatment named in the exclusion section is the single most
+     * useful thing this page can surface, so it is raised to a mismatch rather
+     * than buried among the unknowns.
+     *
+     * It is still phrased as something to check, not a verdict. Exclusion text
+     * is full of conditions and exceptions ("no prior X within 6 months",
+     * "unless Y"), which this page does not read — so a mention is a reason to
+     * ask, never a reason to rule the study out.
+     */
+    if (inExclusion.length) {
+      add(
+        "priorTreatments",
+        "mismatch",
+        `The exclusion criteria mention ${inExclusion.join(", ")}, which you listed as prior treatment. Exclusions often carry time limits or exceptions that are not read here, so raise this with the study team before ruling the study out.`,
+      );
+    }
+    if (inInclusion.length) {
+      add(
         "priorTreatments",
         "unknown",
-        "The prior treatments entered were not found verbatim in the eligibility text. That does not mean they are acceptable, only that the text does not name them.",
+        `The inclusion criteria mention ${inInclusion.join(", ")}. Prior therapy is sometimes required rather than disqualifying, and only the study team can say which applies.`,
+      );
+    }
+    if (unmentioned.length) {
+      add(
+        "priorTreatments",
+        "unknown",
+        `${unmentioned.join(", ")} ${unmentioned.length === 1 ? "was" : "were"} not found in the eligibility text. That does not mean ${unmentioned.length === 1 ? "it is" : "they are"} acceptable, only that the text does not name ${unmentioned.length === 1 ? "it" : "them"}.`,
       );
     }
   }

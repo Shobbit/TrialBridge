@@ -341,6 +341,7 @@ export function searchInputFromProfile(profile: SearchProfile): SearchInput | nu
     recruitmentStatuses: profile.recruitmentStatuses,
     phases: profile.phases,
     keywords: profile.keywords || null,
+    cancerStage: profile.cancerStage,
     pageSize: 20,
   };
 }
