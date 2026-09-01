@@ -27,6 +27,9 @@ function LoadingResults() {
 
 export function ResultsPanel() {
   const results = useTrialStore((s) => s.results);
+  const hiddenResults = useTrialStore((s) => s.hiddenResults);
+  const showHiddenResults = useTrialStore((s) => s.showHiddenResults);
+  const setShowHiddenResults = useTrialStore((s) => s.setShowHiddenResults);
   const meta = useTrialStore((s) => s.resultsMeta);
   const searchState = useTrialStore((s) => s.searchState);
   const searchError = useTrialStore((s) => s.searchError);
@@ -92,16 +95,54 @@ export function ResultsPanel() {
         </div>
       ) : searchState === "loading" ? (
         <LoadingResults />
-      ) : results.length ? (
+      ) : results.length || hiddenResults.length ? (
         <div className="space-y-3">
           {results.map((trial) => (
             <TrialCard key={trial.nctId} trial={trial} />
           ))}
+
+          {/*
+            Withheld studies are disclosed, never silently dropped. The count
+            and the reason are stated before the toggle, so someone who wants
+            to judge for themselves always can.
+          */}
+          {hiddenResults.length ? (
+            <div className="rounded-xl border border-dashed border-tb-border bg-tb-surface-2 p-4">
+              <p className="text-xs font-semibold">
+                {hiddenResults.length}{" "}
+                {hiddenResults.length === 1 ? "study is" : "studies are"} not shown above
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-tb-muted">
+                Each one publishes an exclusion criterion naming a treatment you entered, with no
+                timing or condition attached. That is a strong signal, but it is not a decision:
+                only the study team can confirm whether the criterion applies to you.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowHiddenResults(!showHiddenResults)}
+                aria-expanded={showHiddenResults}
+                className="mt-2 text-[11px] font-medium text-tb-accent underline underline-offset-2"
+              >
+                {showHiddenResults
+                  ? "Hide possibly excluded trials"
+                  : `Show possibly excluded trials (${hiddenResults.length})`}
+              </button>
+
+              {showHiddenResults ? (
+                <div className="mt-3 space-y-3">
+                  {hiddenResults.map((trial) => (
+                    <TrialCard key={trial.nctId} trial={trial} />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : searchState === "success" ? (
-        <EmptyState title="No studies matched those criteria">
-          Try widening the travel distance, removing the phase filter, including more recruitment
-          statuses, or using a broader term for the condition.
+        <EmptyState title="No trials were returned for this search and its selected filters">
+          Try widening the travel distance, removing the phase filter, choosing a broader cancer
+          type, or clearing the stage. Nothing here means no suitable trial exists — only that this
+          search returned none.
         </EmptyState>
       ) : (
         <EmptyState title="No search has run yet">

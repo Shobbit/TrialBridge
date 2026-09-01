@@ -71,6 +71,16 @@ export interface PreScreeningSession {
 interface TrialState {
   profile: SearchProfile;
   results: Trial[];
+  /**
+   * Trials the prior-treatment screen withheld from the main list.
+   *
+   * Held separately rather than filtered out of `results`, so counts, the
+   * "show possibly excluded" toggle and the agent's view all read the same
+   * state, and nothing is silently lost.
+   */
+  hiddenResults: Trial[];
+  /** Whether the withheld trials are currently displayed. */
+  showHiddenResults: boolean;
   resultsMeta: SearchMeta | null;
   searchState: RequestState;
   searchError: string | null;
@@ -89,7 +99,8 @@ interface TrialState {
   setProfile: (update: ProfileUpdate) => SearchProfile;
   replaceProfile: (profile: SearchProfile) => void;
   setSearchState: (state: RequestState, error?: string | null) => void;
-  setResults: (trials: Trial[], meta: SearchMeta) => void;
+  setResults: (trials: Trial[], meta: SearchMeta, hidden?: Trial[]) => void;
+  setShowHiddenResults: (show: boolean) => void;
   cacheDetail: (trial: Trial) => void;
   addToShortlist: (trial: Trial, note: string | null, source: "agent" | "human") => boolean;
   removeFromShortlist: (nctId: string) => boolean;
@@ -204,6 +215,8 @@ export const useTrialStore = create<TrialState>()(
     (set, get) => ({
       profile: EMPTY_PROFILE,
       results: [],
+      hiddenResults: [],
+      showHiddenResults: false,
       resultsMeta: null,
       searchState: "idle",
       searchError: null,
@@ -227,18 +240,25 @@ export const useTrialStore = create<TrialState>()(
 
       setSearchState: (state, error = null) => set({ searchState: state, searchError: error }),
 
-      setResults: (trials, meta) =>
+      setResults: (trials, meta, hidden = []) =>
         set((s) => ({
           results: trials,
+          hiddenResults: hidden,
+          // Every new search starts collapsed. Carrying the toggle over would
+          // silently apply a decision made about a different result set.
+          showHiddenResults: false,
           resultsMeta: meta,
           searchState: "success",
           searchError: null,
           // Search results carry full modules, so they double as detail records.
+          // Withheld studies are cached too, so opening one never refetches.
           detailCache: {
             ...s.detailCache,
-            ...Object.fromEntries(trials.map((t) => [t.nctId, t])),
+            ...Object.fromEntries([...trials, ...hidden].map((t) => [t.nctId, t])),
           },
         })),
+
+      setShowHiddenResults: (show) => set({ showHiddenResults: show }),
 
       cacheDetail: (trial) =>
         set((s) => ({ detailCache: { ...s.detailCache, [trial.nctId]: trial } })),
@@ -321,6 +341,8 @@ export const useTrialStore = create<TrialState>()(
         set({
           profile: EMPTY_PROFILE,
           results: [],
+          hiddenResults: [],
+          showHiddenResults: false,
           resultsMeta: null,
           searchState: "idle",
           searchError: null,

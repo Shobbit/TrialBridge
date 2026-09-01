@@ -65,7 +65,7 @@ export async function runSearch(input: SearchInput): Promise<SearchResponse> {
   }
 
   const data = (await response.json()) as SearchResponse;
-  useTrialStore.getState().setResults(data.trials, data.meta);
+  useTrialStore.getState().setResults(data.trials, data.meta, data.hiddenTrials ?? []);
   return data;
 }
 

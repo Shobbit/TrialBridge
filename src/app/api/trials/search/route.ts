@@ -4,6 +4,7 @@ import { UpstreamError, fetchUpstreamJson } from "@/lib/ctgov/fetch";
 import { normalizeStudy } from "@/lib/ctgov/normalize";
 import { buildSearchUrl } from "@/lib/ctgov/query";
 import { findCancer } from "@/lib/catalog/cancers";
+import { partitionByPriorTreatment } from "@/lib/ctgov/prior-treatment";
 import { filterByCancer } from "@/lib/ctgov/relevance";
 import { stageMatches } from "@/lib/ctgov/stage";
 import { DEFAULT_SEARCH_STATUS, type SearchResponse, type Trial } from "@/lib/ctgov/types";
@@ -153,13 +154,36 @@ export async function POST(request: Request) {
       );
     }
 
+    /*
+     * Prior treatment: hide only a clear, unconditional bar.
+     *
+     * A study whose exclusion criteria plainly name a drug the person has
+     * already had is a dead end, and reading it costs them time they do not
+     * have. Those are moved out of the main list — moved, not discarded: they
+     * travel with the response so the person can read them on request, with the
+     * criterion that triggered it shown verbatim.
+     *
+     * Anything conditional is left in the list with a note. "No prior
+     * everolimus within 4 weeks" depends on dates only the person and the study
+     * team know, so this app must not decide it for them.
+     */
+    const { visible, hidden } = partitionByPriorTreatment(trials, input.netTreatments ?? []);
+
+    if (hidden.length > 0) {
+      warnings.push(
+        `${hidden.length} ${hidden.length === 1 ? "study lists an exclusion criterion that names a treatment" : "studies list exclusion criteria that name treatments"} you entered, so ${hidden.length === 1 ? "it is" : "they are"} not shown by default. You can still read ${hidden.length === 1 ? "it" : "them"}, and only the study team can confirm whether the criterion applies to you.`,
+      );
+    }
+
     const response: SearchResponse = {
-      trials,
+      trials: visible,
+      hiddenTrials: hidden,
       meta: {
         totalCount: typeof payload.totalCount === "number" ? payload.totalCount : null,
-        returnedCount: trials.length,
+        returnedCount: visible.length,
         removedOffTopic: offTopic,
         removedByStage,
+        hiddenByPriorTreatment: hidden.length,
         nextPageToken: typeof payload.nextPageToken === "string" ? payload.nextPageToken : null,
         retrievedAt: new Date().toISOString(),
         upstreamUrl,

@@ -346,7 +346,12 @@ describe("loading and error states", () => {
     await waitFor(() => expect(mcp.registry.size).toBe(10));
     await mcp.callTool("search_clinical_trials", { condition: "example condition" });
 
-    expect(await screen.findByText(/No studies matched those criteria/i)).toBeInTheDocument();
+    // The wording matters: zero results describes this search, not the state
+    // of clinical research, and must never read as "there is nothing for you".
+    expect(
+      await screen.findByText(/No trials were returned for this search and its selected filters/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Nothing here means no suitable trial exists/i)).toBeInTheDocument();
   });
 
   it("surfaces a non-fatal warning without failing the search", async () => {

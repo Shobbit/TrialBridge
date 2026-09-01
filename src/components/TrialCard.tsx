@@ -6,6 +6,7 @@ import { hasDefiniteStage, stageLabel } from "@/lib/ctgov/stage";
 import { analyzeTrial } from "@/lib/match";
 import { useTrialStore } from "@/lib/store";
 import { Findings } from "./Findings";
+import { PriorTreatmentNotice } from "./PriorTreatmentNotice";
 import { Badge, Button, StatusBadge, phaseLabel } from "./primitives";
 
 /**
@@ -122,6 +123,8 @@ export function TrialCard({ trial }: { trial: Trial }) {
       <div className="mt-3">
         <Findings analysis={analysis} />
       </div>
+
+      <PriorTreatmentNotice assessment={trial.priorTreatment} />
 
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-tb-border pt-3">
         <Button type="button" onClick={() => setOpenTrialId(trial.nctId)}>

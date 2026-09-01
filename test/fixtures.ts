@@ -108,11 +108,13 @@ export const rawStudyFixtureB = {
 export function searchResponseFixture(trials: unknown[]) {
   return {
     trials,
+    hiddenTrials: [] as unknown[],
     meta: {
       totalCount: trials.length,
       returnedCount: trials.length,
       removedOffTopic: 0,
       removedByStage: 0,
+      hiddenByPriorTreatment: 0,
       nextPageToken: null as string | null,
       retrievedAt: new Date().toISOString(),
       upstreamUrl: "https://clinicaltrials.gov/api/v2/studies?query.cond=example",

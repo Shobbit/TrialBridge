@@ -1,3 +1,4 @@
+import type { PriorTreatmentAssessment } from "./prior-treatment";
 import type { StageRequirement } from "./stage";
 
 /**
@@ -124,6 +125,15 @@ export interface Trial {
    * inclusion criteria. Empty when the study states none.
    */
   stageRequirement: StageRequirement;
+  /**
+   * How this study's published exclusion criteria read against the treatments
+   * the person entered.
+   *
+   * Optional because it depends on the profile, not on the registry record:
+   * `normalizeStudy` never sets it, and it is absent whenever no treatments
+   * were supplied. Absent means "not screened", never "clear".
+   */
+  priorTreatment?: PriorTreatmentAssessment;
 }
 
 export interface SearchMeta {
@@ -133,6 +143,12 @@ export interface SearchMeta {
   removedOffTopic: number;
   /** Studies dropped because they state a stage that excludes the one entered. */
   removedByStage: number;
+  /**
+   * Studies moved out of the main list because an exclusion criterion names a
+   * treatment the person has had. They are returned in `hiddenTrials`, not
+   * discarded, so the person can always read them.
+   */
+  hiddenByPriorTreatment: number;
   nextPageToken: string | null;
   retrievedAt: string;
   /** The exact upstream URL used, so results are auditable. */
@@ -149,5 +165,13 @@ export interface SearchMeta {
 
 export interface SearchResponse {
   trials: Trial[];
+  /**
+   * Trials withheld from the main list by the prior-treatment screen.
+   *
+   * Sent with the response rather than requiring a second request, so "Show
+   * possibly excluded trials" is instant and the person is never left guessing
+   * what was withheld.
+   */
+  hiddenTrials: Trial[];
   meta: SearchMeta;
 }
