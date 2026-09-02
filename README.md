@@ -14,6 +14,74 @@ that to a browser agent through ten `document.modelContext.registerTool` tools t
 
 ---
 
+## For reviewers and judges — start here
+
+**Live application:** `<PASTE YOUR PUBLIC URL HERE>`
+
+No sign-in, no account, no API key. The page talks to the live ClinicalTrials.gov registry, so
+results are real and change as the registry does.
+
+### The fastest way to see what this is
+
+Open the URL in an ordinary browser. You will see a normal search form and a notice saying
+**"WebMCP not available in this browser"**. That is correct — the tools are offered to the browser,
+and an ordinary browser has nowhere to put them.
+
+Now open the *same URL* in an agent-capable browser:
+
+| Browser | What to do |
+| --- | --- |
+| **ChatGPT desktop app** | Open the built-in browser and navigate to the URL. Use GPT-5.6 **Sol** or **Terra** — Site Tools is disabled on Luna. |
+| **Chrome 149+** | Enable **both** `chrome://flags/#enable-webmcp-testing` and `chrome://flags/#devtools-webmcp-support`, relaunch, then open DevTools → Application → WebMCP. |
+
+The notice changes to **"WebMCP active — 10 tools registered"**, and the ten tools listed below
+become available to the agent.
+
+> Open the deployed URL as a **top-level page**. Tools registered inside an iframe are not
+> discoverable, so a preview pane embedded in another site will not work.
+
+### Five prompts that exercise the whole application
+
+Type these into ChatGPT with the page open in its browser. **Watch the web page, not just the
+chat** — every write appears on screen before the model finishes replying. That coupling is the
+point of the project.
+
+1. **Read the form**
+   > Use the TrialBridge site tools to read my current search profile. Tell me exactly which fields
+   > I have already filled in and which are still missing. Do not search yet.
+
+2. **Fill the form from a narrative** — the form fills itself; "Afinitor" resolves to Everolimus
+   > I have a neuroendocrine tumour, stage 4. I'm 58, I live in Chicago, Illinois, and I can travel
+   > up to 150 miles. I've already had Afinitor. Put all of that into the form, then read the
+   > profile back to confirm what you set.
+
+3. **Search** — real trial cards appear; the counts are reported honestly
+   > Now search for trials that might be relevant. Then tell me how many records you actually
+   > checked, how many trials you're showing me, how many were filtered out and why, and whether
+   > the search reached the end of the results or stopped at its own limit.
+
+4. **Shortlist and compare**
+   > Add the two trials that look most worth a closer look to my shortlist, with a short factual
+   > reason for each drawn from the published data. Then compare them side by side on location,
+   > phase and eligibility criteria.
+
+5. **Pre-screening, including an answer nobody knows** — the safety-critical one
+   > Start pre-screening me against the first shortlisted trial. Ask me about the criteria one at
+   > a time.
+
+   Then answer with a deliberate unknown:
+   > I'm 58. My ECOG status I'm not sure about — I've never been told. And yes, I had Afinitor,
+   > finishing about eight months ago.
+
+   The ECOG answer must be recorded as **unresolved**. The schema rejects any other comparison for
+   an unknown answer, so an agent that tries to score it receives a tool error rather than a
+   convenient guess. Nothing anywhere claims the person is eligible.
+
+All example data above is fictional. Full tool-by-tool instructions, including the Chrome DevTools
+route and the error cases, are in **[WEBMCP_TESTING.md](./WEBMCP_TESTING.md)**.
+
+---
+
 ## What makes this a WebMCP app, not a website with a chatbot
 
 There is no chatbot in this application. Instead, the page registers real tools on the top-level
@@ -191,7 +259,7 @@ password. Four layers, strongest first:
 | **HTTP Basic auth** | `src/proxy.ts` | **The real access control.** Blocks every page, asset, JS bundle and API route without the shared password. Active only when `SITE_PASSWORD` is set. |
 | `X-Robots-Tag` header | `next.config.ts` | `noindex, nofollow, noarchive, nosnippet, noimageindex` on **every** response, including JSON. Honoured even when a URL is reached directly. |
 | `<meta name="robots">` | `src/app/layout.tsx` | Same directives in the HTML itself. |
-| `robots.txt` | `public/robots.txt` | `Disallow: /` for all agents, plus ~25 named crawlers including GPTBot, ClaudeBot, PerplexityBot, CCBot and Bytespider. |
+| `robots.txt` | `public/robots.txt` | `Disallow: /` for all agents, plus ~25 named crawlers including GPTBot, ClaudeBot, PerplexityBot, CCBot and Bytespider. **One deliberate exception:** `ChatGPT-User` is explicitly allowed, because it identifies a fetch a person asked for in their own session rather than a crawler — and driving this page from ChatGPT's browser is the app's purpose. It grants no indexing; `X-Robots-Tag` still applies. |
 
 > **Be clear about what robots.txt is.** It is a *convention*, not a lock — it asks
 > well-behaved crawlers not to index the site, and they comply. It stops nothing else.

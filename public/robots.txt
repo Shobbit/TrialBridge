@@ -1,13 +1,17 @@
-# TrialBridge — private beta.
+# TrialBridge.
 #
-# This site is not intended for public discovery or indexing. It is shared by
-# direct link with named testers only.
+# This site is not intended for public discovery, indexing, or use as training
+# data. It is shared by direct link.
 #
 # Note for anyone reading this file: robots.txt is an advisory convention that
-# well-behaved crawlers choose to honour. It is NOT an access control. The
-# actual protection on this deployment is HTTP authentication (see src/proxy.ts)
-# plus the `X-Robots-Tag: noindex, nofollow` response header sent on every
-# route, which search engines honour even when a page is reached directly.
+# well-behaved crawlers choose to honour. It is NOT an access control. What
+# actually keeps this site out of search results is the
+# `X-Robots-Tag: noindex, nofollow, noarchive` response header sent on every
+# route, which search engines honour even when a URL is reached directly.
+#
+# An HTTP authentication gate also exists (see src/proxy.ts) and activates only
+# when SITE_PASSWORD is set, so whether this deployment is reachable without a
+# password depends on that variable, not on this file.
 
 User-agent: *
 Disallow: /
@@ -56,8 +60,21 @@ Disallow: /
 User-agent: OAI-SearchBot
 Disallow: /
 
+# ChatGPT-User is the one exception, and it is deliberate.
+#
+# It identifies a fetch a person asked for in their own ChatGPT session, not a
+# crawler building an index or a training corpus. TrialBridge is meant to be
+# opened in ChatGPT's browser and driven through its WebMCP site tools, so
+# refusing that agent would be refusing the app's own purpose.
+#
+# This must be an explicit Allow, not just an omission: a user-agent with no
+# group of its own falls through to `User-agent: *` above, which disallows
+# everything. Deleting this block would leave ChatGPT-User blocked.
+#
+# It grants no indexing. `X-Robots-Tag: noindex, nofollow` is sent on every
+# response and is what actually keeps this site out of search results.
 User-agent: ChatGPT-User
-Disallow: /
+Allow: /
 
 User-agent: ClaudeBot
 Disallow: /
