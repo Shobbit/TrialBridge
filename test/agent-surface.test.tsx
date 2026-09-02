@@ -118,6 +118,7 @@ beforeEach(() => {
     shortlist: [],
     questions: [],
     openTrialId: null,
+    comparisonOpen: false,
     preScreening: null,
   });
 });
@@ -575,5 +576,85 @@ describe("the agent changes what the person is looking at", () => {
     expect(
       screen.queryByRole("heading", { name: /comparing your shortlist/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("searching with no arguments", () => {
+  /**
+   * The tool promises that omitted arguments fall back to the visible form, so
+   * an agent can read the profile and then call it bare. That was broken for
+   * the normal case: a cancer chosen from the catalogue leaves `condition`
+   * empty, because the person never typed anything — the search term comes from
+   * the catalogue entry instead. The merge overwrote the derived term with the
+   * empty box, and the call failed with MISSING_CONDITION while
+   * get_search_profile was still reporting readyToSearch: true.
+   */
+  function stubSearch() {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => searchResponseFixture([]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** The body actually POSTed to the search route. */
+  function sentBody(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    return JSON.parse(String(fetchMock.mock.calls[0][1].body));
+  }
+
+  it("searches on the catalogue's own term when called bare", async () => {
+    const fetchMock = stubSearch();
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { cancerId: NET_CANCER_ID });
+
+    const result = await mcp.call("search_clinical_trials", {});
+
+    expect(result.isError).toBeFalsy();
+    expect(sentBody(fetchMock)).toMatchObject({
+      cancerId: NET_CANCER_ID,
+      condition: "neuroendocrine tumor",
+    });
+  });
+
+  it("agrees with what get_search_profile promised", async () => {
+    stubSearch();
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { cancerId: "AML" });
+
+    expect(structured(await mcp.call("get_search_profile")).readyToSearch).toBe(true);
+    // readyToSearch: true and MISSING_CONDITION cannot both be right.
+    expect((await mcp.call("search_clinical_trials", {})).isError).toBeFalsy();
+  });
+
+  it("still lets an explicit condition win", async () => {
+    const fetchMock = stubSearch();
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", { cancerId: NET_CANCER_ID });
+
+    await mcp.call("search_clinical_trials", { condition: "carcinoid syndrome" });
+    expect(sentBody(fetchMock).condition).toBe("carcinoid syndrome");
+  });
+
+  it("still uses the typed wording for the not-listed fallback", async () => {
+    const fetchMock = stubSearch();
+    const mcp = await mountWithTools();
+    await mcp.call("update_search_profile", {
+      cancerId: "other-not-listed",
+      condition: "salivary gland carcinoma",
+    });
+
+    await mcp.call("search_clinical_trials", {});
+    expect(sentBody(fetchMock).condition).toBe("salivary gland carcinoma");
+  });
+
+  it("still refuses when there is genuinely nothing to search for", async () => {
+    stubSearch();
+    const mcp = await mountWithTools();
+
+    const result = await mcp.call("search_clinical_trials", {});
+    expect(result.isError).toBe(true);
+    expect(structured(result).error.code).toBe("MISSING_CONDITION");
   });
 });

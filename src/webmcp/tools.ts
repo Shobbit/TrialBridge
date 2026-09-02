@@ -782,10 +782,22 @@ export function createTools(): ToolDescriptor[] {
         const profile = useTrialStore.getState().profile;
         const base = searchInputFromProfile(profile);
 
+        /*
+         * Precedence for the search term: an explicit argument, then whatever
+         * the form implies, then the typed box.
+         *
+         * `base.condition` is the selected cancer's curated query term, because
+         * choosing from the catalogue means the person never typed anything.
+         * This line used to fall straight through to `profile.condition`, which
+         * is empty in exactly that case — so `search_clinical_trials({})`, the
+         * flow the tool's own description promises, failed with
+         * MISSING_CONDITION while `get_search_profile` was still reporting
+         * `readyToSearch: true`. The two must never disagree.
+         */
         const merged = searchInputSchema.safeParse({
           ...(base ?? {}),
           ...Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined)),
-          condition: args.condition ?? profile.condition,
+          condition: args.condition ?? base?.condition ?? profile.condition,
         });
 
         if (!merged.success) {
