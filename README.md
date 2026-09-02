@@ -16,7 +16,7 @@ that to a browser agent through ten `document.modelContext.registerTool` tools t
 
 ## For reviewers and judges — start here
 
-**Live application:** `<PASTE YOUR PUBLIC URL HERE>`
+**Live application:** **<https://beta-test-2431.replit.app/>**
 
 No sign-in, no account, no API key. The page talks to the live ClinicalTrials.gov registry, so
 results are real and change as the registry does.
