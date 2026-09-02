@@ -91,6 +91,18 @@ interface TrialState {
   questions: ScreeningQuestion[];
   /** NCT id whose detail panel is open, or null. */
   openTrialId: string | null;
+  /**
+   * Whether the full-width comparison view is showing.
+   *
+   * View state, but it belongs here rather than in React, because the WebMCP
+   * handlers run outside the React tree and reach state only through
+   * `getState()`. While this was a `useState` in TrialBridgeApp,
+   * `compare_shortlisted_trials` could not open the view it claimed to have
+   * opened, and `start_trial_prescreening` could not leave it — so an agent
+   * ran a whole pre-screening session behind a screen the person was still
+   * looking at. Not persisted: a refresh should land on the results.
+   */
+  comparisonOpen: boolean;
   /** The one active pre-screening session, or null. */
   preScreening: PreScreeningSession | null;
   /** Bumped whenever an agent writes, so the UI can flash the changed region. */
@@ -108,6 +120,7 @@ interface TrialState {
   addQuestion: (question: Omit<ScreeningQuestion, "id" | "createdAt">) => ScreeningQuestion;
   removeQuestion: (id: string) => boolean;
   setOpenTrialId: (nctId: string | null) => void;
+  setComparisonOpen: (open: boolean) => void;
   startPreScreening: (session: PreScreeningSession) => void;
   recordPreScreeningResponses: (nctId: string, responses: PreScreeningResponse[]) => number;
   clearPreScreening: () => void;
@@ -246,6 +259,7 @@ export const useTrialStore = create<TrialState>()(
       shortlist: [],
       questions: [],
       openTrialId: null,
+      comparisonOpen: false,
       preScreening: null,
       lastAgentActionAt: null,
       lastAgentAction: null,
@@ -320,6 +334,8 @@ export const useTrialStore = create<TrialState>()(
 
       setOpenTrialId: (nctId) => set({ openTrialId: nctId }),
 
+      setComparisonOpen: (open) => set({ comparisonOpen: open }),
+
       /** Replaces any existing session — only one trial is pre-screened at a time. */
       startPreScreening: (session) => set({ preScreening: session }),
 
@@ -372,6 +388,7 @@ export const useTrialStore = create<TrialState>()(
           shortlist: [],
           questions: [],
           openTrialId: null,
+          comparisonOpen: false,
           preScreening: null,
           lastAgentActionAt: null,
           lastAgentAction: null,

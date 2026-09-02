@@ -491,3 +491,89 @@ describe("setting the state", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("the agent changes what the person is looking at", () => {
+  /**
+   * Found by running the real thing in ChatGPT.
+   *
+   * The comparison flag used to be React state inside TrialBridgeApp, which the
+   * tool handlers — running outside React — could not reach. So
+   * `compare_shortlisted_trials` reported "the comparison view is now shown on
+   * the page" and returned `visibleInUi: true` while nothing on screen moved,
+   * and `start_trial_prescreening` ran an entire session behind a comparison
+   * view the person was still looking at.
+   *
+   * These assert against the rendered DOM, not the store, because the store was
+   * never the thing that was wrong.
+   */
+
+  async function shortlistTwo(mcp: Awaited<ReturnType<typeof mountWithTools>>) {
+    const a = normalizeStudy(study("NCT70000001", "Pregnancy")) as Trial;
+    const b = normalizeStudy(study("NCT70000002", "Pregnancy")) as Trial;
+    useTrialStore.getState().addToShortlist(a, null, "human");
+    useTrialStore.getState().addToShortlist(b, null, "human");
+    return mcp;
+  }
+
+  it("opens the comparison view on the page, not just in its reply", async () => {
+    const mcp = await shortlistTwo(await mountWithTools());
+
+    expect(screen.queryByRole("heading", { name: /comparing your shortlist/i })).not.toBeInTheDocument();
+
+    await mcp.call("compare_shortlisted_trials", {});
+
+    expect(
+      await screen.findByRole("heading", { name: /comparing your shortlist/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not claim a view is open unless it is", async () => {
+    const mcp = await shortlistTwo(await mountWithTools());
+    const result = await mcp.call("compare_shortlisted_trials", {});
+
+    expect(result.content[0].text).toMatch(/comparison view is now open/i);
+    expect(structured(result).verification).toMatchObject({
+      visibleInUi: true,
+      comparisonViewOpen: true,
+    });
+    // The claim and the state must agree.
+    expect(useTrialStore.getState().comparisonOpen).toBe(true);
+  });
+
+  it("leaves the comparison view when pre-screening starts", async () => {
+    // Otherwise the session runs behind a screen nobody is looking at.
+    const mcp = await shortlistTwo(await mountWithTools());
+    await mcp.call("compare_shortlisted_trials", {});
+    expect(screen.getByRole("heading", { name: /comparing your shortlist/i })).toBeInTheDocument();
+
+    await mcp.call("start_trial_prescreening", { nctId: "NCT70000001" });
+
+    expect(
+      screen.queryByRole("heading", { name: /comparing your shortlist/i }),
+    ).not.toBeInTheDocument();
+    expect(useTrialStore.getState().comparisonOpen).toBe(false);
+    expect(useTrialStore.getState().preScreening?.nctId).toBe("NCT70000001");
+  });
+
+  it("shows the pre-screening panel once the view has been left", async () => {
+    const mcp = await shortlistTwo(await mountWithTools());
+    await mcp.call("compare_shortlisted_trials", {});
+    await mcp.call("start_trial_prescreening", { nctId: "NCT70000001" });
+
+    // The panel lives in the results column, which the comparison view replaced.
+    // Asserting on the panel itself, not on the NCT id, which also appears in
+    // the shortlist and the results list.
+    expect(await screen.findByRole("heading", { name: /^Pre-screening$/i })).toBeInTheDocument();
+  });
+
+  it("stops showing the comparison if the shortlist drops below two", async () => {
+    const mcp = await shortlistTwo(await mountWithTools());
+    await mcp.call("compare_shortlisted_trials", {});
+
+    await mcp.call("remove_shortlisted_trial", { nctId: "NCT70000002" });
+
+    expect(
+      screen.queryByRole("heading", { name: /comparing your shortlist/i }),
+    ).not.toBeInTheDocument();
+  });
+});

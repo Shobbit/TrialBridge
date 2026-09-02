@@ -1231,8 +1231,14 @@ export function createTools(): ToolDescriptor[] {
           };
         });
 
+        // Open the view before saying it is open. This claim used to be false:
+        // the flag was React state the handlers could not reach, so the agent
+        // reported a comparison the person never saw.
+        useTrialStore.getState().setComparisonOpen(true);
+        useTrialStore.getState().noteAgentAction(`Compared ${trials.length} shortlisted studies`);
+
         return ok(
-          `Compared ${trials.length} shortlisted studies: ${trials.map((t) => t.nctId).join(", ")}. The comparison view is now shown on the page.${
+          `Compared ${trials.length} shortlisted studies: ${trials.map((t) => t.nctId).join(", ")}. The comparison view is now open on the page.${
             skipped.length ? ` Skipped (not on shortlist): ${skipped.join(", ")}.` : ""
           }`,
           {
@@ -1240,7 +1246,10 @@ export function createTools(): ToolDescriptor[] {
             trials,
             skipped,
             source: "ClinicalTrials.gov API v2",
-            verification: { visibleInUi: true },
+            verification: {
+              visibleInUi: true,
+              comparisonViewOpen: useTrialStore.getState().comparisonOpen,
+            },
             disclaimer: ELIGIBILITY_DISCLAIMER,
           },
         );
@@ -1404,6 +1413,10 @@ export function createTools(): ToolDescriptor[] {
           startedAt: new Date().toISOString(),
         });
         store.setOpenTrialId(null);
+        // The comparison view replaces the whole results column, including the
+        // pre-screening panel. Leaving it open would run an entire session
+        // behind a screen the person is still looking at.
+        store.setComparisonOpen(false);
         store.noteAgentAction(`Started pre-screening for ${trial.nctId}`);
 
         return ok(

@@ -117,10 +117,13 @@ immediately — because there is no second copy of the state to synchronise.
 | `get_trial_details` | read-only | Full record including verbatim eligibility criteria; opens the detail panel. |
 | `shortlist_trial` | write | Adds a study to the visible shortlist (idempotent). |
 | `remove_shortlisted_trial` | write, destructive | Removes a study from the shortlist. |
-| `compare_shortlisted_trials` | read-only | Structured side-by-side comparison; switches the page to comparison view. |
+| `compare_shortlisted_trials` | read-only¹ | Structured side-by-side comparison, and opens the full-width comparison view on the page. |
 | `save_screening_question` | write | Adds a question to the visible list for the study team. |
-| `start_trial_prescreening` | write | Opens a guided pre-screening session for one study and returns its criteria, each quoted verbatim with a stable id. |
+| `start_trial_prescreening` | write | Opens a guided pre-screening session for one study and returns its criteria, each quoted verbatim with a stable id. Leaves the comparison view if it is open, so the session is actually visible. |
 | `record_prescreening_responses` | write | Records answers plus the visiting agent's cautious per-criterion comparison, shown beside the verbatim criterion. |
+
+¹ Read-only with respect to *data* — it reads the shortlist and invents nothing. It does change
+which view is showing, because a comparison the person cannot see is not a comparison.
 
 Every tool declares a narrow JSON Schema with `additionalProperties: false`, an output schema,
 correct read-only/destructive annotations, and returns both human-readable `content` and

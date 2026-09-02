@@ -62,6 +62,7 @@ beforeEach(() => {
     shortlist: [],
     questions: [],
     openTrialId: null,
+    comparisonOpen: false,
     preScreening: null,
     lastAgentActionAt: null,
     lastAgentAction: null,

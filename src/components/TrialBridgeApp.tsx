@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTrialStore } from "@/lib/store";
 import { AgentStatus } from "./AgentStatus";
 import { ComparisonView } from "./ComparisonView";
@@ -58,9 +58,11 @@ export function TrialBridgeApp() {
   const shortlistCount = useTrialStore((s) => s.shortlist.length);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  // Comparison is view state, not application data, so it stays in React and
-  // is never persisted.
-  const [comparisonOpen, setComparisonOpen] = useState(false);
+  // Comparison is view state, but it lives in the store rather than in React:
+  // the WebMCP handlers run outside the React tree, so a `useState` here was
+  // unreachable by them. See the field's comment in store.ts.
+  const comparisonOpen = useTrialStore((s) => s.comparisonOpen);
+  const setComparisonOpen = useTrialStore((s) => s.setComparisonOpen);
   const comparisonRef = useRef<HTMLElement>(null);
   const shortlistRef = useRef<HTMLDivElement>(null);
 
@@ -69,22 +71,33 @@ export function TrialBridgeApp() {
   // that no longer has anything to compare.
   const showComparison = comparisonOpen && shortlistCount >= 2;
 
-  function openComparison() {
-    setComparisonOpen(true);
-    // Move focus as well as scroll: a keyboard user must land on the new view,
-    // not be left at the bottom of the page they came from.
-    requestAnimationFrame(() => {
-      comparisonRef.current?.focus();
-      comparisonRef.current?.scrollIntoView({ block: "start" });
-    });
-  }
+  /*
+   * Scroll and focus on the transition itself, not in the click handler.
+   *
+   * The view can now be switched by a person clicking a button or by an agent
+   * calling a tool, and both must land the reader in the same place. Reacting
+   * to the change covers both; putting it in the handler covered only the
+   * first, which is how an agent came to open a view nobody was looking at.
+   */
+  const previousComparison = useRef(showComparison);
+  useEffect(() => {
+    if (previousComparison.current === showComparison) return;
+    previousComparison.current = showComparison;
 
-  function closeComparison() {
-    setComparisonOpen(false);
     requestAnimationFrame(() => {
-      shortlistRef.current?.scrollIntoView({ block: "start" });
+      if (showComparison) {
+        // Move focus as well as scroll: a keyboard user must land on the new
+        // view, not be left at the bottom of the page they came from.
+        comparisonRef.current?.focus();
+        comparisonRef.current?.scrollIntoView({ block: "start" });
+      } else {
+        shortlistRef.current?.scrollIntoView({ block: "start" });
+      }
     });
-  }
+  }, [showComparison]);
+
+  const openComparison = () => setComparisonOpen(true);
+  const closeComparison = () => setComparisonOpen(false);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 pb-24 sm:px-6 lg:py-10 lg:pb-28">
